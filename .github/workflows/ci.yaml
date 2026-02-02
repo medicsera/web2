@@ -17,19 +17,19 @@ jobs:
             ref: t1.jar
 
           - source: task2.kt
-            ref: t1.jar
+            ref: t2.jar
 
           - source: task3.kt
-            ref: t1.jar
+            ref: t3.jar
 
           - source: task4.kt
-            ref: t1.jar
+            ref: t4.jar
 
           - source: task5.kt
-            ref: t1.jar
+            ref: t5.jar
 
           - source: task6.kt
-            ref: t1.jar
+            ref: t6.jar
 
     steps:
       - name: Checkout code
@@ -47,7 +47,7 @@ jobs:
       - name: Run task check for ${{ matrix.source }}
         run: |
           chmod +x ./check.sh
-          ./check.sh ${{ matrix.source }} ${{ matrix.ref }} \
+          ./check.sh "src/${{ matrix.source }}" ".solutions/${{ matrix.ref }}" \
             "the quick brown fox jumps over the lazy dog" \
             "apple banana apple orange banana apple" \
             "10 2 1 20 2 10 30 ! @ #" \

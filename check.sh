@@ -30,9 +30,9 @@ TEST_NUM=1
 for INPUT_DATA in "$@"; do
     echo -e "\n=== Тест #$TEST_NUM: \"$INPUT_DATA\" ==="
 
-    java -jar "$REFERENCE_JAR" $INPUT_DATA > expected.txt 2>&1
+    java -jar "$REFERENCE_JAR" $INPUT_DATA > expected.txt
 
-    java -jar "$STUDENT_JAR" $INPUT_DATA > actual.txt 2>&1
+    java -jar "$STUDENT_JAR" $INPUT_DATA > actual.txt
 
     diff -w -B expected.txt actual.txt
 
