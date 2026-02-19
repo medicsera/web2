@@ -1,0 +1,55 @@
+### Конфигурация
+@base_url = http://localhost:8081
+@content_type = application/json
+
+### ТЕСТ 1: Проверка GET /greeting (default)
+GET {{base_url}}/greeting
+
+> {%
+    client.test("Тест 1: Проверка text = Hello World", function() {
+        client.assert(response.status === 200, "Статус не 200");
+        client.assert(response.body.text === "Hello World", "Текст не совпадает");
+    });
+%}
+
+### ТЕСТ 2 (Часть A): POST Create
+POST {{base_url}}/greeting
+Content-Type: {{content_type}}
+
+{
+  "name": "Антон",
+  "surname": "Злобко"
+}
+
+> {%
+    client.test("Тест 2A: Успешное создание", function() {
+        client.assert(response.status === 200, "Статус не 200");
+        client.assert(response.body.id !== null, "ID не получен");
+    });
+
+    // Сохраняем ID в глобальную переменную для следующих запросов
+    client.global.set("saved_id", response.body.id);
+    client.log("ID сохранен: " + response.body.id);
+%}
+
+### ТЕСТ 2 (Часть B): GET Path
+GET {{base_url}}/greeting/{{saved_id}}
+
+> {%
+    client.test("Тест 2B: Проверка данных (Path)", function() {
+        client.assert(response.status === 200, "Статус не 200");
+        client.assert(response.body.name === "Антон", "Имя не совпадает");
+        client.assert(response.body.surname === "Злобко", "Фамилия не совпадает");
+    });
+%}
+
+### ТЕСТ 3: GET Query Param
+GET {{base_url}}/greeting?id={{saved_id}}
+
+> {%
+    client.test("Тест 3: Проверка данных (Query)", function() {
+        client.assert(response.status === 200, "Статус не 200");
+        client.assert(response.body.name === "Антон", "Имя не совпадает");
+        client.assert(response.body.surname === "Злобко", "Фамилия не совпадает");
+    });
+%}
