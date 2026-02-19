@@ -1,4 +1,4 @@
-name: Kotlin Homework CI
+name: Spring boot CI
 
 on:
   pull_request:
@@ -9,46 +9,28 @@ on:
 jobs:
   check-tasks:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - source: task1.kt
-            ref: t1.jar
-
-          - source: task2.kt
-            ref: t2.jar
-
-          - source: task3.kt
-            ref: t3.jar
-
-          - source: task4.kt
-            ref: t4.jar
-
-          - source: task5.kt
-            ref: t5.jar
-
-          - source: task6.kt
-            ref: t6.jar
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Setup JDK
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'temurin'
 
-      - name: Setup Kotlin
-        uses: fwilhe2/setup-kotlin@main
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Run task check for ${{ matrix.source }}
-        run: |
-          chmod +x ./check.sh
-          ./check.sh "src/${{ matrix.source }}" ".solutions/${{ matrix.ref }}" \
-            "the quick brown fox jumps over the lazy dog" \
-            "apple banana apple orange banana apple" \
-            "10 2 1 20 2 10 30 ! @ #" \
-            "Word word WORD woRd"
+      - name: Grant scripts permition
+        run: chmod +x ./mvnw ./.test/run-test.sh
+
+      - name: Compile Spring app
+        run: ./mvnw clean package
+
+      - name: Run Spring app
+        run: java -jar ./target/*.jar &
+
+      - name: Run tests
+        run: ./.test/run-test.sh
