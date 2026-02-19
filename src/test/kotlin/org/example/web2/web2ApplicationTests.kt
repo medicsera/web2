@@ -1,4 +1,4 @@
-package org.example.web2spingboot
+package org.example.web2
 
 import org.junit.jupiter.api.Test
 import org.springframework.boot.test.context.SpringBootTest
