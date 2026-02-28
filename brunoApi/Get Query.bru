@@ -1,0 +1,42 @@
+meta {
+  name: Get Query
+  type: http
+  seq: 2
+}
+
+get {
+  url: {{base_url}}/greeting?id={{createdUserId}}
+  body: json
+  auth: inherit
+}
+
+params:query {
+  id: {{createdUserId}}
+}
+
+body:json {
+  {
+    "name": "Антон",
+    "surname": "Злобко",
+    "email": "Zlobko@example.com"
+  }
+}
+
+script:pre-request {
+  
+  
+}
+
+script:post-response {
+  test("Тест 3: Данные совпадают (Query Param)", function() {
+      expect(res.status).to.equal(200);
+      expect(res.body.name).to.equal("Антон");
+      expect(res.body.surname).to.equal("Злобко");
+  });
+  
+}
+
+settings {
+  encodeUrl: true
+  timeout: 0
+}
