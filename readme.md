@@ -60,7 +60,7 @@ spring:
     password:
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: update  
     show-sql: true
   h2:
     console:
