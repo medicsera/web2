@@ -1,11 +1,11 @@
-package org.example.web2
+package com.example.spring_jpa
 
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.runApplication
 
 @SpringBootApplication
-class Web2SpingBootApplication 
+class SpringJpaApplication
 
 fun main(args: Array<String>) {
-    runApplication<Web2SpingBootApplication>(*args)
+    runApplication<SpringJpaApplication>(*args)
 }

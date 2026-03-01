@@ -1,10 +1,10 @@
-package org.example.web2
+package com.example.spring_jpa
 
 import org.junit.jupiter.api.Test
 import org.springframework.boot.test.context.SpringBootTest
 
 @SpringBootTest
-class web2ApplicationTests {
+class SpringJpaApplicationTests {
 
     @Test
     fun contextLoads() {
