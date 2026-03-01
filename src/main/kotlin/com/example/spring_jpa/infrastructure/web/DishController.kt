@@ -18,26 +18,56 @@ class DishController (
         ResponseEntity.ok(dishService.getAll(namePart))
 
     @GetMapping("/{id}")
-    fun getById(@PathVariable id: Long): ResponseEntity<DishResponse> =
+    fun getById(@PathVariable id: Long): ResponseEntity<Any> =
         dishService.getById(id)
             ?.let { ResponseEntity.ok(it) }
-            ?: ResponseEntity.notFound().build()
+            ?: ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(mapOf(
+                    "status" to "NOT_FOUND",
+                    "error" to "Not Found",
+                    "message" to "Dish with id $id not found"
+                ))
 
     @PostMapping
-    fun create(@RequestBody request: CreateDishRequest): ResponseEntity<DishResponse> =
-        ResponseEntity.status(HttpStatus.CREATED).body(dishService.create(request))
+    fun create(@RequestBody request: CreateDishRequest): ResponseEntity<Any> {
+        // Проверяем, существует ли блюдо с таким именем
+        val existingDish = dishService.getByName(request.name)
+
+        return if (existingDish != null) {
+            // Если существует — возвращаем 200 OK
+            ResponseEntity.ok(existingDish)
+        } else {
+            // Если новое — создаём и возвращаем 201 Created
+            ResponseEntity.status(HttpStatus.CREATED)
+                .body(dishService.create(request))
+        }
+    }
 
     @PutMapping("/{id}")
     fun update(
         @PathVariable id: Long,
         @RequestBody request: UpdateDishRequest
-    ): ResponseEntity<DishResponse> =
+    ): ResponseEntity<Any> =
         dishService.update(id, request)
             ?.let { ResponseEntity.ok(it) }
-            ?: ResponseEntity.notFound().build()
+            ?: ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(mapOf(
+                    "status" to "NOT_FOUND",
+                    "error" to "Not Found",
+                    "message" to "Dish with id $id not found"
+                ))
+
+
 
     @DeleteMapping("/{id}")
-    fun delete(@PathVariable id: Long): ResponseEntity<Void> =
-        if (dishService.delete(id)) ResponseEntity.noContent().build()
-        else ResponseEntity.notFound().build()
+    fun delete(@PathVariable id: Long): ResponseEntity<Any> =
+        if (dishService.delete(id))
+            ResponseEntity.noContent().build()
+        else
+            ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(mapOf(
+                    "status" to "NOT_FOUND",
+                    "error" to "Not Found",
+                    "message" to "Dish with id $id not found"
+                ))
 }

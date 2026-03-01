@@ -1,7 +1,9 @@
 package com.example.spring_jpa.infrastructure.jpa
 
+import com.example.spring_jpa.domain.model.Dish
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Query
+import java.util.Optional
 
 interface DishJpaRepository : JpaRepository<DishEntity, Long> {
     @Query(
@@ -12,4 +14,5 @@ interface DishJpaRepository : JpaRepository<DishEntity, Long> {
         """
     )
     fun  findByNameContaining(namePart: String): List<DishEntity>
+    fun findByName(name: String): Optional<DishEntity>
 }

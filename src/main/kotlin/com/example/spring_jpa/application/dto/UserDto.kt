@@ -6,7 +6,7 @@ data class CreateUserRequest(
     val email: String,
     val firstName: String,
     val lastName: String,
-    val isActive: Boolean = true
+    val isActive: Boolean
 )
 
 data class UpdateUserRequest(

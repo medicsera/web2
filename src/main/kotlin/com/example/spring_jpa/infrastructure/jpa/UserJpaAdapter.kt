@@ -22,11 +22,12 @@ class UserJpaAdapter(
         return userJpaRepository.save(entity).toDomain()
     }
 
-    override fun update(id: Long, user: User): User? {
-        if (!userJpaRepository.existsById(id)) return null
-        val entity = UserEntity.fromDomain(user.copy(id = id))
-        return userJpaRepository.save(entity).toDomain()
+    override fun update(user: User): User? {
+        return userJpaRepository.save(UserEntity.fromDomain(user)).toDomain()
     }
+
+    override fun save(user: User): User =
+        userJpaRepository.save(UserEntity.fromDomain(user)).toDomain()
 
     override fun deleteById(id: Long): Boolean {
         if (!userJpaRepository.existsById(id)) return false
@@ -36,4 +37,8 @@ class UserJpaAdapter(
 
     override fun existsByEmail(email: String): Boolean =
         userJpaRepository.existsByEmail(email)
+
+    override fun findByEmail(email: String): User? =
+        userJpaRepository.findByEmail(email)?.toDomain()
+
 }

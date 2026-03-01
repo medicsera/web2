@@ -12,23 +12,35 @@ class UserMockRepository : UserRepositoryPort{
     private var sequence = 1L
 
     override fun findAll(): List<User> = storage.values.toList()
-    override fun findById(id: Long): User? = storage[id]
+
     override fun create(user: User): User {
         val saved = user.copy(id = sequence++)
         storage[saved.id] = saved
         return saved
     }
 
-    override fun update(id: Long, user: User): User? {
-        if (!storage.containsKey(id)) return null
-        val updated = user.copy(id = id)
-        storage[id] = updated
-        return updated
+    override fun update(user: User): User? {
+        storage[user.id] = user
+
+        return user
+    }
+
+    override fun save(user: User): User {
+        val saved = user.copy(id = sequence++)
+        storage[saved.id] = saved
+        return saved
+    }
+
+    override fun findById(id: Long): User? {
+        return storage[id]
     }
 
     override fun deleteById(id: Long): Boolean = storage.remove(id) != null
 
     override fun existsByEmail(email: String): Boolean =
-        storage.values.any { it.email == email
-    }
+        storage.values.any { it.email == email }
+
+    override fun findByEmail(email: String): User? =
+        storage.values.find { it.email == email }
+
 }

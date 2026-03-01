@@ -4,11 +4,13 @@ import com.example.spring_jpa.application.dto.*
 import com.example.spring_jpa.domain.model.User
 import com.example.spring_jpa.domain.port.UserRepositoryPort
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
 
 @Service
+@Transactional
 class UserService (
     private val userRepository: UserRepositoryPort
-){
+)  {
     fun getAll(): List<UserResponse> =
         userRepository.findAll().map { UserResponse.fromDomain(it) }
 
@@ -17,6 +19,7 @@ class UserService (
 
     fun create(request: CreateUserRequest): UserResponse {
         val user = User(
+            id = 0,
             email = request.email,
             firstName = request.firstName,
             lastName = request.lastName,
@@ -26,15 +29,21 @@ class UserService (
     }
 
     fun update(id: Long, request: UpdateUserRequest): UserResponse? {
-        val user = User(
-            id = id,
-            email = request.email,
+        val existingUser = userRepository.findById(id) ?: return null
+
+        val updatedUser = existingUser.copy(
             firstName = request.firstName,
             lastName = request.lastName,
             isActive = request.isActive
         )
-        return userRepository.update(id,user)?.let { UserResponse.fromDomain(it) }
+
+        return userRepository.update(updatedUser)?.let {
+            UserResponse.fromDomain(it)
+        }
     }
 
     fun delete(id: Long): Boolean = userRepository.deleteById(id)
+
+    fun getByEmail(email: String): UserResponse? =
+        userRepository.findByEmail(email)?.let { UserResponse.fromDomain(it) }
 }

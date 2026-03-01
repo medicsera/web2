@@ -152,7 +152,7 @@ call_api "PUT" "/api/v1/users/$USER_ID" "$USER_UPDATE_PAYLOAD"
 assert_status "200"
 UPDATED_FIRST_NAME=$(echo "$API_BODY" | jq -r '.firstName')
 UPDATED_LAST_NAME=$(echo "$API_BODY" | jq -r '.lastName')
-UPDATED_ACTIVE=$(echo "$API_BODY" | jq -r '.isActive')
+UPDATED_ACTIVE=$(echo "$API_BODY" | jq -r '.active')
 if [ "$UPDATED_FIRST_NAME" != "IvanUpdated" ] || [ "$UPDATED_LAST_NAME" != "PetrovUpdated" ] || [ "$UPDATED_ACTIVE" != "false" ]; then
     echo -e "${RED}FAIL${NC}"
     echo "  Не применилось обновление пользователя"
@@ -201,7 +201,7 @@ assert_json_field_exists "id"
 assert_json_field_exists "name"
 assert_json_field_exists "description"
 assert_json_field_exists "price"
-assert_json_field_exists "isAvailable"
+assert_json_field_exists "available"
 DISH_ID=$(echo "$API_BODY" | jq -r '.id')
 if [ "$DISH_ID" = "null" ] || [ -z "$DISH_ID" ]; then
     echo -e "${RED}FAIL${NC}"
@@ -259,7 +259,7 @@ echo -n "Тест 16: PUT /api/v1/dishes/{id} -> 200... "
 call_api "PUT" "/api/v1/dishes/$DISH_ID" "$DISH_UPDATE_PAYLOAD"
 assert_status "200"
 UPDATED_DISH_NAME=$(echo "$API_BODY" | jq -r '.name')
-UPDATED_DISH_AVAILABLE=$(echo "$API_BODY" | jq -r '.isAvailable')
+UPDATED_DISH_AVAILABLE=$(echo "$API_BODY" | jq -r '.available')
 if [ "$UPDATED_DISH_NAME" != "${DISH_NAME}-Updated" ] || [ "$UPDATED_DISH_AVAILABLE" != "false" ]; then
     echo -e "${RED}FAIL${NC}"
     echo "  Не применилось обновление блюда"

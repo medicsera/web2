@@ -24,6 +24,9 @@ class DishService(
     fun getById(id: Long): DishResponse? =
         dishRepository.findById(id)?.let { DishResponse.fromDomain(it) }
 
+    fun getByName(name: String): DishResponse? =
+        dishRepository.findByName(name)?.let { DishResponse.fromDomain(it) }
+
     fun create(request: CreateDishRequest): DishResponse {
         val dish = Dish(
             name = request.name,

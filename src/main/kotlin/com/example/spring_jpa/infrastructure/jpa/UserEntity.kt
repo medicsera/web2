@@ -18,7 +18,7 @@ class UserEntity (
     val firstName: String = "",
 
     @Column(nullable = false)
-    val lastname: String = "",
+    val lastName: String = "",
 
     @Column(nullable = false)
     val isActive: Boolean = true
@@ -27,7 +27,7 @@ class UserEntity (
         id = id,
         email = email,
         firstName = firstName,
-        lastName = lastname,
+        lastName = lastName,
         isActive = isActive
     )
 
@@ -36,7 +36,7 @@ class UserEntity (
             id = user.id,
             email = user.email,
             firstName = user.firstName,
-            lastname = user.lastName,
+            lastName = user.lastName,
             isActive = user.isActive
         )
     }

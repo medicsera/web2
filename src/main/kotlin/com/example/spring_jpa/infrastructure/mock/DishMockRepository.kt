@@ -20,6 +20,10 @@ class DishMockRepository : DishRepositoryPort {
 
     override fun findById(id: Long): Dish? = storage[id]
 
+    override fun findByName(name: String): Dish? =
+        storage.values.find { it.name == name }
+
+
     override fun create(dish: Dish): Dish {
         val saved = dish.copy(id = sequence++)
         storage[saved.id] = saved

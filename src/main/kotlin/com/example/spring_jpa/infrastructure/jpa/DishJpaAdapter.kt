@@ -20,6 +20,9 @@ class DishJpaAdapter(
     override fun findById(id: Long): Dish? =
         dishJpaRepository.findById(id).orElse(null)?.toDomain()
 
+    override fun findByName(name: String): Dish? =
+        dishJpaRepository.findByName(name).orElse(null)?.toDomain()
+
     override fun create(dish: Dish): Dish {
         val entity = DishEntity.fromDomain(dish.copy(id = 0))
         return dishJpaRepository.save(entity).toDomain()
