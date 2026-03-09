@@ -1,14 +1,14 @@
 package com.example.spring_jpa.application.dto
 
 import com.example.spring_jpa.domain.model.Dish
-
 import java.math.BigDecimal
 
 data class CreateDishRequest(
     val name: String,
     val description: String,
     val price: BigDecimal,
-    val isAvailable: Boolean = true
+    val isAvailable: Boolean = true,
+    val restaurantId: Long
 )
 
 data class UpdateDishRequest(
@@ -23,7 +23,8 @@ data class DishResponse(
     val name: String,
     val description: String,
     val price: BigDecimal,
-    val isAvailable: Boolean
+    val isAvailable: Boolean,
+    val restaurantId: Long
 ) {
     companion object {
         fun fromDomain(dish: Dish): DishResponse = DishResponse(
@@ -31,8 +32,8 @@ data class DishResponse(
             name = dish.name,
             description = dish.description,
             price = dish.price,
-            isAvailable = dish.isAvailable
+            isAvailable = dish.isAvailable,
+            restaurantId = dish.restaurantId
         )
     }
 }
-

@@ -1,17 +1,12 @@
 package com.example.spring_jpa.infrastructure.jpa.entity
 
 import com.example.spring_jpa.domain.model.Dish
-import jakarta.persistence.Column
-import jakarta.persistence.Entity
-import jakarta.persistence.GeneratedValue
-import jakarta.persistence.GenerationType
-import jakarta.persistence.Id
-import jakarta.persistence.Table
+import jakarta.persistence.*
 import java.math.BigDecimal
 
 @Entity
 @Table(name = "dishes")
-class DishEntity (
+class DishEntity(
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     val id: Long = 0,
@@ -27,13 +22,21 @@ class DishEntity (
 
     @Column(nullable = false)
     val isAvailable: Boolean = true,
-)   {
-    fun toDomain(): Dish = Dish(
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "restaurant_id", nullable = false)
+    val restaurant: RestaurantEntity? = null,
+
+    @ManyToMany(mappedBy = "dishes")
+    val orders: List<OrderEntity> = emptyList()
+) {
+    fun toDomain() = Dish(
         id = id,
         name = name,
         description = description,
         price = price,
         isAvailable = isAvailable,
+        restaurantId = restaurant?.id ?: 0L
     )
 
     companion object {
@@ -42,7 +45,7 @@ class DishEntity (
             name = dish.name,
             description = dish.description,
             price = dish.price,
-            isAvailable = dish.isAvailable,
+            isAvailable = dish.isAvailable
         )
     }
 }

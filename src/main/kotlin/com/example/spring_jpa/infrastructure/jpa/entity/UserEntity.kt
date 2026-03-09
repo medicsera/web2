@@ -1,12 +1,7 @@
 package com.example.spring_jpa.infrastructure.jpa.entity
 
 import com.example.spring_jpa.domain.model.User
-import jakarta.persistence.Column
-import jakarta.persistence.Entity
-import jakarta.persistence.GeneratedValue
-import jakarta.persistence.GenerationType
-import jakarta.persistence.Id
-import jakarta.persistence.Table
+import jakarta.persistence.*
 
 @Entity
 @Table(name = "users")
@@ -25,7 +20,10 @@ class UserEntity (
     val lastName: String = "",
 
     @Column(nullable = false)
-    val isActive: Boolean = true
+    val isActive: Boolean = true,
+
+    @OneToMany(mappedBy = "user", cascade = [CascadeType.ALL], orphanRemoval = true)
+    val orders: List<OrderEntity> = emptyList()
 )   {
     fun toDomain(): User = User(
         id = id,
