@@ -1,8 +1,12 @@
-package com.example.spring_jpa.infrastructure.jpa
+package com.example.spring_jpa.infrastructure.jpa.entity
 
-import com.example.spring_jpa.domain.model.Dish
 import com.example.spring_jpa.domain.model.User
-import jakarta.persistence.*
+import jakarta.persistence.Column
+import jakarta.persistence.Entity
+import jakarta.persistence.GeneratedValue
+import jakarta.persistence.GenerationType
+import jakarta.persistence.Id
+import jakarta.persistence.Table
 
 @Entity
 @Table(name = "users")
@@ -23,7 +27,7 @@ class UserEntity (
     @Column(nullable = false)
     val isActive: Boolean = true
 )   {
-    fun toDomain(): User =  User(
+    fun toDomain(): User = User(
         id = id,
         email = email,
         firstName = firstName,

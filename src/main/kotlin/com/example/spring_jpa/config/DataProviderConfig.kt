@@ -2,7 +2,10 @@ package com.example.spring_jpa.config
 
 import com.example.spring_jpa.domain.port.DishRepositoryPort
 import com.example.spring_jpa.domain.port.UserRepositoryPort
-import com.example.spring_jpa.infrastructure.jpa.*
+import com.example.spring_jpa.infrastructure.jpa.adapter.DishJpaAdapter
+import com.example.spring_jpa.infrastructure.jpa.adapter.UserJpaAdapter
+import com.example.spring_jpa.infrastructure.jpa.repository.DishJpaRepository
+import com.example.spring_jpa.infrastructure.jpa.repository.UserJpaRepository
 import com.example.spring_jpa.infrastructure.mock.DishMockRepository
 import com.example.spring_jpa.infrastructure.mock.UserMockRepository
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty

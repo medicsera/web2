@@ -1,6 +1,6 @@
-package com.example.spring_jpa.infrastructure.jpa
+package com.example.spring_jpa.infrastructure.jpa.repository
 
-import com.example.spring_jpa.domain.model.Dish
+import com.example.spring_jpa.infrastructure.jpa.entity.DishEntity
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Query
 import java.util.Optional

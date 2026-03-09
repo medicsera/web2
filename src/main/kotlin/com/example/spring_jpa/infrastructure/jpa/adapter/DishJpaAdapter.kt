@@ -1,7 +1,9 @@
-package com.example.spring_jpa.infrastructure.jpa
+package com.example.spring_jpa.infrastructure.jpa.adapter
 
 import com.example.spring_jpa.domain.model.Dish
 import com.example.spring_jpa.domain.port.DishRepositoryPort
+import com.example.spring_jpa.infrastructure.jpa.repository.DishJpaRepository
+import com.example.spring_jpa.infrastructure.jpa.entity.DishEntity
 import org.springframework.context.annotation.Profile
 import org.springframework.stereotype.Repository
 

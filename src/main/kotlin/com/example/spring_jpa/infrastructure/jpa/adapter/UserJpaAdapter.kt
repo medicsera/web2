@@ -1,7 +1,9 @@
-package com.example.spring_jpa.infrastructure.jpa
+package com.example.spring_jpa.infrastructure.jpa.adapter
 
 import com.example.spring_jpa.domain.model.User
 import com.example.spring_jpa.domain.port.UserRepositoryPort
+import com.example.spring_jpa.infrastructure.jpa.repository.UserJpaRepository
+import com.example.spring_jpa.infrastructure.jpa.entity.UserEntity
 import org.springframework.context.annotation.Profile
 import org.springframework.stereotype.Repository
 
