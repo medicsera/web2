@@ -1,8 +1,12 @@
 package com.example.spring_jpa.application.service
 
+import com.example.spring_jpa.application.dto.CreateDishRequest
+import com.example.spring_jpa.application.dto.UpdateDishRequest
 import com.example.spring_jpa.domain.model.Dish
 import com.example.spring_jpa.domain.port.DishRepositoryPort
 import org.slf4j.LoggerFactory
+import org.springframework.data.domain.Page
+import org.springframework.data.domain.Pageable
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 
