@@ -1,44 +1,56 @@
 package com.example.spring_jpa.application.service
 
-import com.example.spring_jpa.application.dto.CreateDishRequest
-import com.example.spring_jpa.application.dto.UpdateDishRequest
 import com.example.spring_jpa.domain.model.Dish
 import com.example.spring_jpa.domain.port.DishRepositoryPort
-import com.example.spring_jpa.domain.port.RestaurantRepositoryPort
-import org.springframework.data.domain.Page
-import org.springframework.data.domain.Pageable
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
-import java.math.BigDecimal
 
 @Service
 @Transactional
 class DishService(
-    private val dishRepository: DishRepositoryPort,
-    private val restaurantRepository: RestaurantRepositoryPort
+    private val dishRepository: DishRepositoryPort
 ) {
-    @Transactional(readOnly = true)
-    fun findAll(): List<Dish> = dishRepository.findAll()
+    private val logger = LoggerFactory.getLogger(javaClass)
 
     @Transactional(readOnly = true)
-    fun findAllByNamePart(namePart: String): List<Dish> =
-        dishRepository.findAllByNamePart(namePart)
+    fun findAll(): List<Dish> {
+        logger.info("Fetching all dishes")
+        return dishRepository.findAll()
+    }
 
     @Transactional(readOnly = true)
-    fun findById(id: Long): Dish? = dishRepository.findByIdWithRelations(id)
+    fun findAllByNamePart(namePart: String): List<Dish> {
+        logger.info("Fetching dishes by name part: {}", namePart)
+        return dishRepository.findAllByNamePart(namePart)
+    }
 
     @Transactional(readOnly = true)
-    fun findByName(name: String): Dish? = dishRepository.findByName(name)
+    fun findById(id: Long): Dish? {
+        logger.info("Fetching dish with id: {}", id)
+        return dishRepository.findById(id)
+    }
 
     @Transactional(readOnly = true)
-    fun findByRestaurantId(restaurantId: Long, pageable: Pageable): Page<Dish> =
-        dishRepository.findByRestaurantId(restaurantId, pageable)
+    fun findByName(name: String): Dish? {
+        logger.info("Fetching dish by name: {}", name)
+        return dishRepository.findByName(name)
+    }
 
     @Transactional(readOnly = true)
-    fun findAvailable(): List<Dish> = dishRepository.findByIsAvailableTrue()
+    fun findByRestaurantId(restaurantId: Long, pageable: Pageable): Page<Dish> {
+        logger.info("Fetching dishes by restaurant id: {}", restaurantId)
+        return dishRepository.findByRestaurantId(restaurantId, pageable)
+    }
+
+    @Transactional(readOnly = true)
+    fun findAvailable(): List<Dish> {
+        logger.info("Fetching available dishes")
+        return dishRepository.findByIsAvailableTrue()
+    }
 
     fun create(request: CreateDishRequest): Dish {
-        restaurantRepository.findById(request.restaurantId)
+        val restaurant = dishRepository.findById(request.restaurantId)
             ?: throw IllegalArgumentException("Restaurant not found: ${request.restaurantId}")
 
         val dish = Dish(
@@ -49,6 +61,7 @@ class DishService(
             restaurantId = request.restaurantId
         )
 
+        logger.info("Creating dish: {}", dish)
         return dishRepository.create(dish)
     }
 
@@ -60,8 +73,20 @@ class DishService(
             price = request.price,
             isAvailable = request.isAvailable
         )
+
+        logger.info("Updating dish with id: {}", id)
         return dishRepository.update(id, updated)
     }
 
-    fun deleteById(id: Long): Boolean = dishRepository.deleteById(id)
+    fun deleteById(id: Long): Boolean {
+        val deleted = dishRepository.deleteById(id)
+
+        if (deleted) {
+            logger.info("Deleted dish with id: {}", id)
+        } else {
+            logger.warn("Dish with id {} not found", id)
+        }
+
+        return deleted
+    }
 }
