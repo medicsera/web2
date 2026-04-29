@@ -1,7 +1,5 @@
 package com.example.spring_jpa.application.dto
 
-
-
 import jakarta.validation.constraints.*
 import java.math.BigDecimal
 
