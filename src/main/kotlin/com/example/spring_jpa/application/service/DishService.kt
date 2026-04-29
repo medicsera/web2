@@ -37,23 +37,18 @@ class DishService(
     @Transactional(readOnly = true)
     fun findAvailable(): List<Dish> = dishRepository.findByIsAvailableTrue()
 
-    fun create(
-        name: String,
-        description: String,
-        price: BigDecimal,
-        isAvailable: Boolean,
-        restaurantId: Long
-    ): Dish {
-        restaurantRepository.findById(restaurantId)
-            ?: throw IllegalArgumentException("Restaurant not found: $restaurantId")
+    fun create(request: CreateDishRequest): Dish {
+        restaurantRepository.findById(request.restaurantId)
+            ?: throw IllegalArgumentException("Restaurant not found: ${request.restaurantId}")
 
         val dish = Dish(
-            name = name,
-            description = description,
-            price = price,
-            isAvailable = isAvailable,
-            restaurantId = restaurantId
+            name = request.name,
+            description = request.description,
+            price = request.price,
+            isAvailable = request.isAvailable,
+            restaurantId = request.restaurantId
         )
+
         return dishRepository.create(dish)
     }
 
