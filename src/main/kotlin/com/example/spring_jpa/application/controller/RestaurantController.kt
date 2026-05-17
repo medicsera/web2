@@ -8,7 +8,7 @@ import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
 
 
-@RestController
+@RestController("legacyRestaurantController")
 @RequestMapping("/restaurants")
 class RestaurantController(private val restaurantService: RestaurantService) {
     @PostMapping

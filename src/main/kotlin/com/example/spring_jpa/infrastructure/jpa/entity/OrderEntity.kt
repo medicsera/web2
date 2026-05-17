@@ -36,7 +36,8 @@ class OrderEntity(
         status = status,
         createdAt = createdAt,
         userId = user?.id ?: 0L,
-        dishIds = dishes.map { it.id }
+        dishIds = dishes.map { it.id },
+        dishes = dishes.map { it.toDomain() }
     )
 
     companion object {

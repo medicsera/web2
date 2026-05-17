@@ -4,14 +4,18 @@ import com.example.spring_jpa.domain.model.Order
 import com.example.spring_jpa.domain.model.OrderStatus
 import com.example.spring_jpa.domain.port.OrderRepositoryPort
 import com.example.spring_jpa.infrastructure.jpa.entity.OrderEntity
+import com.example.spring_jpa.infrastructure.jpa.repository.DishJpaRepository
 import com.example.spring_jpa.infrastructure.jpa.repository.OrderJpaRepository
+import com.example.spring_jpa.infrastructure.jpa.repository.UserJpaRepository
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.stereotype.Repository
 
 @Repository
 class OrderJpaAdapter(
-    private val orderJpaRepository: OrderJpaRepository
+    private val orderJpaRepository: OrderJpaRepository,
+    private val userJpaRepository: UserJpaRepository,
+    private val dishJpaRepository: DishJpaRepository
 ) : OrderRepositoryPort {
 
     override fun findAll(): List<Order> =
@@ -30,12 +34,12 @@ class OrderJpaAdapter(
         orderJpaRepository.findByStatus(status, pageable).map { it.toDomain() }
 
     override fun save(order: Order): Order {
-        val entity = OrderEntity.fromDomain(order)
+        val entity = buildEntity(order)
         return orderJpaRepository.save(entity).toDomain()
     }
 
     override fun create(order: Order): Order {
-        val entity = OrderEntity.fromDomain(order.copy(id = 0))
+        val entity = buildEntity(order.copy(id = 0))
         return orderJpaRepository.save(entity).toDomain()
     }
 
@@ -55,5 +59,17 @@ class OrderJpaAdapter(
         if (!orderJpaRepository.existsById(id)) return false
         orderJpaRepository.deleteById(id)
         return true
+    }
+
+    private fun buildEntity(order: Order): OrderEntity {
+        val user = userJpaRepository.findById(order.userId).orElse(null)
+        val dishes = dishJpaRepository.findAllById(order.dishIds).toMutableList()
+        return OrderEntity(
+            id = order.id,
+            status = order.status,
+            createdAt = order.createdAt,
+            user = user,
+            dishes = dishes
+        )
     }
 }

@@ -8,7 +8,7 @@ import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
 
 
-@RestController
+@RestController("legacyOrderController")
 @RequestMapping("/orders")
 
 class OrderController(private val orderService: OrderService) {

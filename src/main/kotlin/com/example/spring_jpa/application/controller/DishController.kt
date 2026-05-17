@@ -8,7 +8,7 @@ import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
 
 
-@RestController
+@RestController("legacyDishController")
 @RequestMapping("/dishes")
 
 class DishController(private val dishService: DishService) {
