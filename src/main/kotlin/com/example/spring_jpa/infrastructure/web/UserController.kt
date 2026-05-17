@@ -4,66 +4,44 @@ import com.example.spring_jpa.application.dto.CreateUserRequest
 import com.example.spring_jpa.application.dto.UpdateUserRequest
 import com.example.spring_jpa.application.dto.UserResponse
 import com.example.spring_jpa.application.service.UserService
+import jakarta.validation.Valid
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
 
-
 @RestController
 @RequestMapping("/api/v1/users")
-class UserController (
-    private val userService: UserService,
+class UserController(
+    private val userService: UserService
 ) {
     @GetMapping
     fun getAll(): ResponseEntity<List<UserResponse>> =
         ResponseEntity.ok(userService.getAll())
 
     @GetMapping("/{id}")
-    fun getById(@PathVariable id: Long): ResponseEntity<Any> =
-        userService.getById(id)
-            ?.let { ResponseEntity.ok(it) }
-            ?: ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(mapOf(
-                    "status" to "NOT_FOUND",
-                    "error" to "Not Found",
-                    "message" to "User with id $id not found"  // ← С динамическим id
-                ))
+    fun getById(@PathVariable id: Long): ResponseEntity<UserResponse> =
+        ResponseEntity.ok(userService.getById(id))
 
     @PostMapping
-    fun create(@RequestBody request: CreateUserRequest): ResponseEntity<UserResponse> {
+    fun create(@Valid @RequestBody request: CreateUserRequest): ResponseEntity<UserResponse> {
         val existingUser = userService.getByEmail(request.email)
-
         return if (existingUser != null) {
             ResponseEntity.ok(existingUser)
         } else {
-            ResponseEntity.status(HttpStatus.CREATED)
-                .body(userService.create(request))
+            ResponseEntity.status(HttpStatus.CREATED).body(userService.create(request))
         }
     }
 
     @PutMapping("/{id}")
     fun update(
         @PathVariable id: Long,
-        @RequestBody request: UpdateUserRequest
-    ): ResponseEntity<Any> =
-        userService.update(id, request)
-            ?.let { ResponseEntity.ok(it) }
-            ?: ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(mapOf(
-                    "status" to "NOT_FOUND",
-                    "error" to "Not Found",
-                    "message" to "User with id $id not found"
-                ))
+        @Valid @RequestBody request: UpdateUserRequest
+    ): ResponseEntity<UserResponse> =
+        ResponseEntity.ok(userService.update(id, request))
 
     @DeleteMapping("/{id}")
-    fun delete(@PathVariable id: Long): ResponseEntity<Any> =
-        if (userService.delete(id))
-            ResponseEntity.noContent().build()
-        else
-            ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(mapOf(
-                    "status" to "NOT_FOUND",
-                    "error" to "Not Found",
-                    "message" to "User with id $id not found"
-                ))
+    fun delete(@PathVariable id: Long): ResponseEntity<Void> {
+        userService.delete(id)
+        return ResponseEntity.noContent().build()
+    }
 }

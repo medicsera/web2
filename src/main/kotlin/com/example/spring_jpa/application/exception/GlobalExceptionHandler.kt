@@ -1,6 +1,5 @@
 package com.example.spring_jpa.application.exception
 
-import com.example.spring_jpa.domain.model.ErrorResponse
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -31,10 +30,18 @@ class GlobalExceptionHandler {
         return ResponseEntity(ErrorResponse(HttpStatus.BAD_REQUEST, ex.message), HttpStatus.BAD_REQUEST)
     }
 
+    @ExceptionHandler(BadRequestException::class)
+    fun handleBadRequestException(ex: BadRequestException): ResponseEntity<ErrorResponse> {
+        logger.warn("Bad Request Exception: {}", ex.message)
+        return ResponseEntity(ErrorResponse(HttpStatus.BAD_REQUEST, ex.message), HttpStatus.BAD_REQUEST)
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException::class)
     fun handleMethodArgumentNotValidException(ex: MethodArgumentNotValidException): ResponseEntity<ValidationErrorResponse> {
-        val errors = ex.bindingResult.fieldErrors.map { FieldError(it.objectName, it.field, it.defaultMessage) }
-        logger.warn("Validation Error: {}", errors.joinToString(", "))
+        val errors = ex.bindingResult.fieldErrors
+            .groupBy { it.field }
+            .mapValues { (_, errs) -> errs.first().defaultMessage ?: "" }
+        logger.warn("Validation Error: {}", errors)
         return ResponseEntity(ValidationErrorResponse(HttpStatus.BAD_REQUEST, "Validation failed", errors), HttpStatus.BAD_REQUEST)
     }
 

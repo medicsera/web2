@@ -3,21 +3,6 @@ package com.example.spring_jpa.application.dto
 import com.example.spring_jpa.domain.model.Dish
 import java.math.BigDecimal
 
-data class CreateDishRequest(
-    val name: String,
-    val description: String,
-    val price: BigDecimal,
-    val isAvailable: Boolean = true,
-    val restaurantId: Long
-)
-
-data class UpdateDishRequest(
-    val name: String,
-    val description: String,
-    val price: BigDecimal,
-    val isAvailable: Boolean = true
-)
-
 data class DishResponse(
     val id: Long,
     val name: String,

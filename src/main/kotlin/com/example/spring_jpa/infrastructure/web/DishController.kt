@@ -2,6 +2,7 @@ package com.example.spring_jpa.infrastructure.web
 
 import com.example.spring_jpa.application.dto.*
 import com.example.spring_jpa.application.service.DishService
+import jakarta.validation.Valid
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.PageRequest
 import org.springframework.data.domain.Sort
@@ -31,10 +32,7 @@ class DishController(
 
     @GetMapping("/{id}")
     fun getById(@PathVariable id: Long): ResponseEntity<DishResponse> =
-        dishService.findById(id)
-            ?.let { DishResponse.fromDomain(it) }
-            ?.let { ResponseEntity.ok(it) }
-            ?: ResponseEntity.status(HttpStatus.NOT_FOUND).build()
+        ResponseEntity.ok(DishResponse.fromDomain(dishService.findById(id)))
 
     @GetMapping("/restaurant/{restaurantId}")
     fun getByRestaurant(
@@ -48,32 +46,21 @@ class DishController(
     }
 
     @PostMapping
-    fun create(@RequestBody request: CreateDishRequest): ResponseEntity<DishResponse> {
-        val dish = dishService.create(
-            name = request.name,
-            description = request.description,
-            price = request.price,
-            isAvailable = request.isAvailable,
-            restaurantId = request.restaurantId
-        )
-        return ResponseEntity.status(HttpStatus.CREATED)
-            .body(DishResponse.fromDomain(dish))
+    fun create(@Valid @RequestBody request: CreateDishRequest): ResponseEntity<DishResponse> {
+        val dish = dishService.create(request)
+        return ResponseEntity.status(HttpStatus.CREATED).body(DishResponse.fromDomain(dish))
     }
 
     @PutMapping("/{id}")
     fun update(
         @PathVariable id: Long,
-        @RequestBody request: UpdateDishRequest
+        @Valid @RequestBody request: UpdateDishRequest
     ): ResponseEntity<DishResponse> =
-        dishService.update(id, request)
-            ?.let { DishResponse.fromDomain(it) }
-            ?.let { ResponseEntity.ok(it) }
-            ?: ResponseEntity.status(HttpStatus.NOT_FOUND).build()
+        ResponseEntity.ok(DishResponse.fromDomain(dishService.update(id, request)))
 
     @DeleteMapping("/{id}")
-    fun delete(@PathVariable id: Long): ResponseEntity<Void> =
-        if (dishService.deleteById(id))
-            ResponseEntity.noContent().build()
-        else
-            ResponseEntity.status(HttpStatus.NOT_FOUND).build()
+    fun delete(@PathVariable id: Long): ResponseEntity<Void> {
+        dishService.deleteById(id)
+        return ResponseEntity.noContent().build()
+    }
 }
