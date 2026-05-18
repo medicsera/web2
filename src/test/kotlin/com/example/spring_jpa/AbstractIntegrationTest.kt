@@ -31,6 +31,6 @@ abstract class AbstractIntegrationTest {
         @Container
         @ServiceConnection
         @JvmStatic
-        val postgres: PostgreSQLContainer<*> = PostgreSQLContainer("postgres:17-alpine")
+        val postgres: PostgreSQLContainer<*> = PostgreSQLContainer("postgres:16-alpine")
     }
 }
