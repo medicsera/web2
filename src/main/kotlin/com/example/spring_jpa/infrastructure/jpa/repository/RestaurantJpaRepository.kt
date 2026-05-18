@@ -12,10 +12,11 @@ import org.springframework.stereotype.Repository
 interface RestaurantJpaRepository : JpaRepository<RestaurantEntity, Long> {
 
     @EntityGraph(attributePaths = ["dishes"])
-    @Query("SELECT r FROM RestaurantEntity r WHERE r.id = :id")  // ← Явный запрос!
-    fun findByIdWithDishes(@Param("id") id: Long): RestaurantEntity?  // ← @Param для параметра
+    @Query("SELECT r FROM RestaurantEntity r WHERE r.id = :id")
+    fun findByIdWithDishes(@Param("id") id: Long): RestaurantEntity?
 
-    // Если нужен метод для поиска блюд ресторана:
+    fun findByName(name: String): RestaurantEntity?
+
     @Query("SELECT d FROM DishEntity d WHERE d.restaurant.id = :restaurantId")
     fun findDishesByRestaurantId(@Param("restaurantId") id: Long): List<DishEntity>
 }

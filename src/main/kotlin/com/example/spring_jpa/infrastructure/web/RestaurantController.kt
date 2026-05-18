@@ -1,9 +1,12 @@
 package com.example.spring_jpa.infrastructure.web
 
+import com.example.spring_jpa.application.dto.CreateDishRequest
 import com.example.spring_jpa.application.dto.CreateRestaurantRequest
 import com.example.spring_jpa.application.dto.DishResponse
 import com.example.spring_jpa.application.dto.RestaurantResponse
+import com.example.spring_jpa.application.service.DishService
 import com.example.spring_jpa.application.service.RestaurantService
+import jakarta.validation.Valid
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.*
@@ -11,53 +14,47 @@ import org.springframework.web.bind.annotation.*
 @RestController
 @RequestMapping("/api/v1/restaurants")
 class RestaurantController(
-    private val restaurantService: RestaurantService
+    private val restaurantService: RestaurantService,
+    private val dishService: DishService
 ) {
 
     @GetMapping
-    fun getAll(): ResponseEntity<List<RestaurantResponse>> {
-        val restaurants = restaurantService.findAll()
-        return ResponseEntity.ok(restaurants.map { RestaurantResponse.fromDomain(it) })
-    }
+    fun getAll(): ResponseEntity<List<RestaurantResponse>> =
+        ResponseEntity.ok(restaurantService.findAll().map { RestaurantResponse.fromDomain(it) })
 
     @GetMapping("/{id}")
     fun getById(@PathVariable id: Long): ResponseEntity<RestaurantResponse> =
-        restaurantService.findById(id)
-            ?.let { RestaurantResponse.fromDomain(it) }
-            ?.let { ResponseEntity.ok(it) }
-            ?: ResponseEntity.status(HttpStatus.NOT_FOUND).build()
+        ResponseEntity.ok(RestaurantResponse.fromDomain(restaurantService.findById(id)))
 
     @PostMapping
-    fun create(@RequestBody request: CreateRestaurantRequest): ResponseEntity<RestaurantResponse> {
+    fun create(@Valid @RequestBody request: CreateRestaurantRequest): ResponseEntity<RestaurantResponse> {
         val restaurant = restaurantService.create(request)
-        return ResponseEntity.status(HttpStatus.CREATED)
-            .body(RestaurantResponse.fromDomain(restaurant))
+        return ResponseEntity.status(HttpStatus.CREATED).body(RestaurantResponse.fromDomain(restaurant))
     }
 
     @PutMapping("/{id}")
     fun update(
         @PathVariable id: Long,
-        @RequestBody request: CreateRestaurantRequest
+        @Valid @RequestBody request: CreateRestaurantRequest
     ): ResponseEntity<RestaurantResponse> =
-        restaurantService.update(id, request)
-            ?.let { RestaurantResponse.fromDomain(it) }
-            ?.let { ResponseEntity.ok(it) }
-            ?: ResponseEntity.status(HttpStatus.NOT_FOUND).build()
+        ResponseEntity.ok(RestaurantResponse.fromDomain(restaurantService.update(id, request)))
 
     @DeleteMapping("/{id}")
-    fun delete(@PathVariable id: Long): ResponseEntity<Void> =
-        if (restaurantService.deleteById(id))
-            ResponseEntity.noContent().build()
-        else
-            ResponseEntity.status(HttpStatus.NOT_FOUND).build()
+    fun delete(@PathVariable id: Long): ResponseEntity<Void> {
+        restaurantService.deleteById(id)
+        return ResponseEntity.noContent().build()
+    }
 
     @GetMapping("/{id}/dishes")
-    fun getDishesByRestaurant(
+    fun getDishesByRestaurant(@PathVariable id: Long): ResponseEntity<List<DishResponse>> =
+        ResponseEntity.ok(restaurantService.findDishesByRestaurantId(id).map { DishResponse.fromDomain(it) })
+
+    @PostMapping("/{id}/dishes")
+    fun createDish(
         @PathVariable id: Long,
-        @RequestParam(defaultValue = "0") page: Int,
-        @RequestParam(defaultValue = "20") size: Int
-    ): ResponseEntity<List<DishResponse>> {
-        val dishes = restaurantService.findDishesByRestaurantId(id)
-        return ResponseEntity.ok(dishes.map { DishResponse.fromDomain(it) })
+        @Valid @RequestBody request: CreateDishRequest
+    ): ResponseEntity<DishResponse> {
+        val dish = dishService.create(request.copy(restaurantId = id))
+        return ResponseEntity.status(HttpStatus.CREATED).body(DishResponse.fromDomain(dish))
     }
 }

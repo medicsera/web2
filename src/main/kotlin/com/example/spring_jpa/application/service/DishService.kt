@@ -2,14 +2,16 @@ package com.example.spring_jpa.application.service
 
 import com.example.spring_jpa.application.dto.CreateDishRequest
 import com.example.spring_jpa.application.dto.UpdateDishRequest
+import com.example.spring_jpa.application.exception.BadRequestException
+import com.example.spring_jpa.application.exception.NotFoundException
 import com.example.spring_jpa.domain.model.Dish
 import com.example.spring_jpa.domain.port.DishRepositoryPort
 import com.example.spring_jpa.domain.port.RestaurantRepositoryPort
+import org.slf4j.LoggerFactory
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
-import java.math.BigDecimal
 
 @Service
 @Transactional
@@ -17,56 +19,91 @@ class DishService(
     private val dishRepository: DishRepositoryPort,
     private val restaurantRepository: RestaurantRepositoryPort
 ) {
-    @Transactional(readOnly = true)
-    fun findAll(): List<Dish> = dishRepository.findAll()
+    private val logger = LoggerFactory.getLogger(javaClass)
 
     @Transactional(readOnly = true)
-    fun findAllByNamePart(namePart: String): List<Dish> =
-        dishRepository.findAllByNamePart(namePart)
-
-    @Transactional(readOnly = true)
-    fun findById(id: Long): Dish? = dishRepository.findByIdWithRelations(id)
-
-    @Transactional(readOnly = true)
-    fun findByName(name: String): Dish? = dishRepository.findByName(name)
-
-    @Transactional(readOnly = true)
-    fun findByRestaurantId(restaurantId: Long, pageable: Pageable): Page<Dish> =
-        dishRepository.findByRestaurantId(restaurantId, pageable)
-
-    @Transactional(readOnly = true)
-    fun findAvailable(): List<Dish> = dishRepository.findByIsAvailableTrue()
-
-    fun create(
-        name: String,
-        description: String,
-        price: BigDecimal,
-        isAvailable: Boolean,
-        restaurantId: Long
-    ): Dish {
-        restaurantRepository.findById(restaurantId)
-            ?: throw IllegalArgumentException("Restaurant not found: $restaurantId")
-
-        val dish = Dish(
-            name = name,
-            description = description,
-            price = price,
-            isAvailable = isAvailable,
-            restaurantId = restaurantId
-        )
-        return dishRepository.create(dish)
+    fun findAll(): List<Dish> {
+        logger.info("Fetching all dishes")
+        return dishRepository.findAll()
     }
 
-    fun update(id: Long, request: UpdateDishRequest): Dish? {
-        val existing = dishRepository.findById(id) ?: return null
+    @Transactional(readOnly = true)
+    fun findAllByNamePart(namePart: String): List<Dish> {
+        logger.info("Fetching dishes by name part: {}", namePart)
+        return dishRepository.findAllByNamePart(namePart)
+    }
+
+    @Transactional(readOnly = true)
+    fun findById(id: Long): Dish {
+        return dishRepository.findById(id)
+            ?: run {
+                logger.warn("Dish not found with id: {}", id)
+                throw NotFoundException("Dish not found with id: $id")
+            }
+    }
+
+    @Transactional(readOnly = true)
+    fun findByName(name: String): Dish? {
+        logger.info("Fetching dish by name: {}", name)
+        return dishRepository.findByName(name)
+    }
+
+    @Transactional(readOnly = true)
+    fun findByRestaurantId(restaurantId: Long, pageable: Pageable): Page<Dish> {
+        logger.info("Fetching dishes by restaurant id: {}", restaurantId)
+        return dishRepository.findByRestaurantId(restaurantId, pageable)
+    }
+
+    @Transactional(readOnly = true)
+    fun findAvailable(): List<Dish> {
+        logger.info("Fetching available dishes")
+        return dishRepository.findByIsAvailableTrue()
+    }
+
+    fun create(request: CreateDishRequest): Dish {
+        val restId = request.restaurantId
+            ?: throw BadRequestException("Restaurant ID cannot be null")
+        restaurantRepository.findById(restId)
+            ?: run {
+                logger.warn("Restaurant not found with id: {}", restId)
+                throw NotFoundException("Restaurant not found with id: $restId")
+            }
+        val dish = Dish(
+            name = request.name,
+            description = request.description ?: "",
+            price = request.price,
+            isAvailable = request.isAvailable ?: true,
+            restaurantId = restId
+        )
+        val created = dishRepository.create(dish)
+        logger.info("Created dish with id: {}", created.id)
+        return created
+    }
+
+    fun update(id: Long, request: UpdateDishRequest): Dish {
+        val existing = dishRepository.findById(id)
+            ?: run {
+                logger.warn("Dish not found with id: {}", id)
+                throw NotFoundException("Dish not found with id: $id")
+            }
         val updated = existing.copy(
             name = request.name,
-            description = request.description,
+            description = request.description ?: "",
             price = request.price,
-            isAvailable = request.isAvailable
+            isAvailable = request.isAvailable ?: existing.isAvailable
         )
-        return dishRepository.update(id, updated)
+        val saved = dishRepository.update(id, updated)
+            ?: throw NotFoundException("Dish not found with id: $id")
+        logger.info("Updated dish with id: {}", id)
+        return saved
     }
 
-    fun deleteById(id: Long): Boolean = dishRepository.deleteById(id)
+    fun deleteById(id: Long) {
+        val deleted = dishRepository.deleteById(id)
+        if (!deleted) {
+            logger.warn("Dish not found with id: {}", id)
+            throw NotFoundException("Dish not found with id: $id")
+        }
+        logger.info("Deleted dish with id: {}", id)
+    }
 }

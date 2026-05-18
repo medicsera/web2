@@ -7,5 +7,6 @@ data class Order(
     val status: OrderStatus = OrderStatus.PENDING,
     val createdAt: LocalDateTime = LocalDateTime.now(),
     val userId: Long,
-    val dishIds: List<Long> = emptyList()
+    val dishIds: List<Long> = emptyList(),
+    val dishes: List<Dish> = emptyList()
 )

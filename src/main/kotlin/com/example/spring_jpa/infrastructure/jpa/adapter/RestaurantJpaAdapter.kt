@@ -18,6 +18,9 @@ class RestaurantJpaAdapter(
     override fun findById(id: Long): Restaurant? =
         jpaRepository.findById(id).map { it.toDomain() }.orElse(null)
 
+    override fun findByName(name: String): Restaurant? =
+        jpaRepository.findByName(name)?.toDomain()
+
     override fun save(restaurant: Restaurant): Restaurant {
         val entity = jpaRepository.save(restaurant.toEntity())
         return entity.toDomain()
@@ -41,7 +44,7 @@ class RestaurantJpaAdapter(
     )
 
     private fun Restaurant.toEntity() = RestaurantEntity(
-        id = id,
+        id = id.takeIf { it > 0 },
         name = name,
         address = address
     )

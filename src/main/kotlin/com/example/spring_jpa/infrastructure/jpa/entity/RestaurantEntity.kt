@@ -11,10 +11,10 @@ class RestaurantEntity(
     val id: Long? = null,
 
     @Column(nullable = false)
-    var name: String,
+    var name: String = "",
 
     @Column(columnDefinition = "TEXT", nullable = false)
-    var address: String,
+    var address: String = "",
 
     @OneToMany(mappedBy = "restaurant", fetch = FetchType.LAZY)
     var dishes: List<DishEntity> = emptyList()

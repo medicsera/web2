@@ -10,11 +10,16 @@ import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 
 interface OrderJpaRepository : JpaRepository<OrderEntity, Long> {
+    @EntityGraph(attributePaths = ["user", "dishes"])
+    override fun findAll(): List<OrderEntity>
+
+    @EntityGraph(attributePaths = ["user", "dishes"])
     fun findByUserId(userId: Long, pageable: Pageable): Page<OrderEntity>
 
+    @EntityGraph(attributePaths = ["user", "dishes"])
     fun findByStatus(status: OrderStatus, pageable: Pageable): Page<OrderEntity>
 
     @EntityGraph(attributePaths = ["user", "dishes"])
-    @Query("SELECT o FROM OrderEntity o WHERE o.id = :id")  // ← Явный запрос!
+    @Query("SELECT o FROM OrderEntity o WHERE o.id = :id")
     fun findByIdWithRelations(@Param("id") id: Long): OrderEntity?
 }

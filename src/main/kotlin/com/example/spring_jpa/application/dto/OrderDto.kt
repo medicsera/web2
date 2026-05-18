@@ -4,11 +4,6 @@ import com.example.spring_jpa.domain.model.Order
 import com.example.spring_jpa.domain.model.OrderStatus
 import java.time.LocalDateTime
 
-data class CreateOrderRequest(
-    val userId: Long,
-    val dishIds: List<Long>
-)
-
 data class UpdateOrderStatusRequest(
     val status: OrderStatus
 )
@@ -18,7 +13,7 @@ data class OrderResponse(
     val status: OrderStatus,
     val createdAt: LocalDateTime,
     val userId: Long,
-    val dishIds: List<Long>
+    val dishes: List<DishResponse>
 ) {
     companion object {
         fun fromDomain(order: Order): OrderResponse = OrderResponse(
@@ -26,7 +21,7 @@ data class OrderResponse(
             status = order.status,
             createdAt = order.createdAt,
             userId = order.userId,
-            dishIds = order.dishIds
+            dishes = order.dishes.map { DishResponse.fromDomain(it) }
         )
     }
 }
