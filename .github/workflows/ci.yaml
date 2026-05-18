@@ -20,8 +20,6 @@ jobs:
           java-version: '24'
           distribution: 'temurin'
 
-
-
       - name: Load .env
         run: cat .env >> $GITHUB_ENV
 

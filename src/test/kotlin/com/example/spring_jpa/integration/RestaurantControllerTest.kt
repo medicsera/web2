@@ -3,7 +3,6 @@ package com.example.spring_jpa.integration
 import com.example.spring_jpa.AbstractIntegrationTest
 import com.example.spring_jpa.application.dto.CreateRestaurantRequest
 import com.example.spring_jpa.application.service.RestaurantService
-import com.fasterxml.jackson.databind.ObjectMapper
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.MediaType
@@ -18,9 +17,6 @@ class RestaurantControllerTest : AbstractIntegrationTest() {
 
     @Autowired
     lateinit var restaurantService: RestaurantService
-
-    @Autowired
-    lateinit var objectMapper: ObjectMapper
 
     private fun createRestaurant(name: String = "Test Restaurant", address: String = "Test Address") =
         restaurantService.create(CreateRestaurantRequest(name = name, address = address))
@@ -55,12 +51,10 @@ class RestaurantControllerTest : AbstractIntegrationTest() {
 
     @Test
     fun `POST create restaurant returns 201 and created restaurant`() {
-        val request = CreateRestaurantRequest(name = "New Cafe", address = "456 Oak Ave")
-
         mockMvc.perform(
             post("/api/v1/restaurants")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(request))
+                .content("""{"name": "New Cafe", "address": "456 Oak Ave"}""")
         )
             .andExpect(status().isCreated)
             .andExpect(jsonPath("$.name").value("New Cafe"))
@@ -85,12 +79,11 @@ class RestaurantControllerTest : AbstractIntegrationTest() {
     @Test
     fun `POST with duplicate name returns 409 conflict`() {
         createRestaurant(name = "Unique Bistro")
-        val request = CreateRestaurantRequest(name = "Unique Bistro", address = "Different Address")
 
         mockMvc.perform(
             post("/api/v1/restaurants")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(request))
+                .content("""{"name": "Unique Bistro", "address": "Different Address"}""")
         )
             .andExpect(status().isConflict)
             .andExpect(jsonPath("$.message").exists())
@@ -99,12 +92,11 @@ class RestaurantControllerTest : AbstractIntegrationTest() {
     @Test
     fun `PUT update restaurant returns 200 and updated data`() {
         val restaurant = createRestaurant(name = "Old Name")
-        val request = CreateRestaurantRequest(name = "New Name", address = "New Address")
 
         mockMvc.perform(
             put("/api/v1/restaurants/${restaurant.id}")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(request))
+                .content("""{"name": "New Name", "address": "New Address"}""")
         )
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.name").value("New Name"))
@@ -113,12 +105,10 @@ class RestaurantControllerTest : AbstractIntegrationTest() {
 
     @Test
     fun `PUT with non-existent id returns 404`() {
-        val request = CreateRestaurantRequest(name = "Name", address = "Address")
-
         mockMvc.perform(
             put("/api/v1/restaurants/999999")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(request))
+                .content("""{"name": "Name", "address": "Address"}""")
         )
             .andExpect(status().isNotFound)
     }
