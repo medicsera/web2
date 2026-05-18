@@ -26,10 +26,8 @@ class RestaurantJpaAdapter(
         return entity.toDomain()
     }
 
-    override fun findDishesByRestaurantId(id: Long): List<Dish> {
-        // Реализация через DishJpaRepository
-        TODO("Реализовать позже")
-    }
+    override fun findDishesByRestaurantId(id: Long): List<Dish> =
+        jpaRepository.findDishesByRestaurantId(id).map { it.toDomain() }
 
     override fun deleteById(id: Long): Boolean {
         if (!jpaRepository.existsById(id)) return false
