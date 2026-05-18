@@ -14,7 +14,7 @@ class DishEntity(
     @Column(nullable = false)
     val name: String = "",
 
-    @Column(nullable = false)
+    @Column(columnDefinition = "text", nullable = false)
     val description: String = "",
 
     @Column(nullable = false)
