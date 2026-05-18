@@ -78,6 +78,8 @@ class RestaurantControllerTest : AbstractIntegrationTest() {
                 .content(body)
         )
             .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.status").value(400))
+            .andExpect(jsonPath("$.errors.name").exists())
     }
 
     @Test
