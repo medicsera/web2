@@ -6,6 +6,10 @@ import com.example.spring_jpa.application.dto.DishResponse
 import com.example.spring_jpa.application.dto.RestaurantResponse
 import com.example.spring_jpa.application.service.DishService
 import com.example.spring_jpa.application.service.RestaurantService
+import io.swagger.v3.oas.annotations.Operation
+import io.swagger.v3.oas.annotations.responses.ApiResponse
+import io.swagger.v3.oas.annotations.responses.ApiResponses
+import io.swagger.v3.oas.annotations.tags.Tag
 import jakarta.validation.Valid
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -14,21 +18,37 @@ import org.springframework.web.bind.annotation.*
 
 @RestController
 @RequestMapping("/api/v1/restaurants")
+@Tag(name = "Restaurants", description = "Управление ресторанами")
 class RestaurantController(
     private val restaurantService: RestaurantService,
     private val dishService: DishService
 ) {
 
     @GetMapping
+    @Operation(summary = "Получить список всех ресторанов")
+    @ApiResponses(value = [
+        ApiResponse(responseCode = "200", description = "Список ресторанов успешно получен")
+    ])
     fun getAll(): ResponseEntity<List<RestaurantResponse>> =
         ResponseEntity.ok(restaurantService.findAll().map { RestaurantResponse.fromDomain(it) })
 
     @GetMapping("/{id}")
+    @Operation(summary = "Получить ресторан по ID")
+    @ApiResponses(value = [
+        ApiResponse(responseCode = "200", description = "Ресторан найден"),
+        ApiResponse(responseCode = "404", description = "Ресторан не найден")
+    ])
     fun getById(@PathVariable id: Long): ResponseEntity<RestaurantResponse> =
         ResponseEntity.ok(RestaurantResponse.fromDomain(restaurantService.findById(id)))
 
     @PostMapping
     @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Создать новый ресторан")
+    @ApiResponses(value = [
+        ApiResponse(responseCode = "201", description = "Ресторан успешно создан"),
+        ApiResponse(responseCode = "400", description = "Некорректные данные запроса"),
+        ApiResponse(responseCode = "403", description = "Доступ запрещён — требуется роль ADMIN")
+    ])
     fun create(@Valid @RequestBody request: CreateRestaurantRequest): ResponseEntity<RestaurantResponse> {
         val restaurant = restaurantService.create(request)
         return ResponseEntity.status(HttpStatus.CREATED).body(RestaurantResponse.fromDomain(restaurant))
