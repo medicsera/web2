@@ -1,252 +1,415 @@
-# Лабораторная работа №2
-## Spring boot. ~~Возвращение джедая~~ Начало
+# Лабораторная работа №8
+
+## Документация API, контейнеризация и CI/CD
 
 ---
 
-## Необходимый софт для выполнения задания
+## Цель работы
 
-- IntelliJ IDEA CE или аналоги ([OpenIDE](https://openide.ru/), [GigaIDE](https://gitverse.ru/features/gigaide/))
-- Плагин для работы со Spring проектами [Amplicode](https://amplicode.ru/).
-- JDK 21 / JDK 17
-- Kotlin
-- [Postman](https://www.postman.com/)
-- [Bruno](https://docs.usebruno.com/)
-
-PS: Вы можете использовать любую другую IDE, но тогда вам придется самостоятельно разобраться в том как это все работает ^_^
-PPS: Вы также можете выбрать сборщик (Gradle/Maven). На данном этапе это не имеет значения
+Задокументировать REST API через SpringDoc, упаковать приложение в Docker-образ, поднять весь стек через docker-compose и настроить автоматическую доставку образа в реестр через GitHub Actions.
 
 ---
 
-## Теоретическая часть
+## Что нужно сдать
 
-Здесь мы рассмотрим процесс создания простого REST API с использованием фреймворка **Spring Boot**.  
-Мы создадим 1 эндпоинт и проведем тестирование его работоспособности через различные инструменты.
+Ссылку на PR в ваш репозиторий (шаблон у вас есть).
 
+---
 
-### Создание проекта Spring Boot + Kotlin
+## Теоретический блок
 
-1. Открываем IDE и создаем новый проект  
-![Тут должно быть изображение](./.assets/img/creating-screen.png)  
-По умолчанию сборщик - Maven, так и оставляем, язык **Kotlin**.  
-Откроется созданный проект. структура должна быть примерно следующей:  
-![Тут должен быть скрин](./.assets/img/start-screen.png)  
+### 1) Документирование API: SpringDoc OpenAPI
 
-2. Далее откроем файл конфигурации `pom.xml`. Нужно будет добавить несколько зависимостей в проект
+#### Зачем это нужно
+
+Когда API растёт, его становится сложно изучать по коду. SpringDoc автоматически генерирует документацию из ваших контроллеров и публикует интерактивный Swagger UI — браузерный интерфейс, через который можно смотреть все эндпоинты и сразу отправлять запросы.
+
+#### Зависимость
+
 ```xml
-
+<!-- pom.xml -->
 <dependency>
-    <groupId>org.springframework.boot</groupId>
-    <artifactId>spring-boot-starter-web</artifactId>
-</dependency>
-
-<dependency>
-    <groupId>tools.jackson.module</groupId>
-    <artifactId>jackson-module-kotlin</artifactId>
+    <groupId>org.springdoc</groupId>
+    <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+    <version>2.8.9</version>
 </dependency>
 ```
 
-3. Далее запустим приложение (хоть пока ничего нет, мы должны проверить работоспособность). Сделать это можно нажав 
-   на зелененькую стрелочку слева от метода main или выполнив команду из терминала
-```shell
-./mvnw spring-boot:run
+После добавления зависимости Swagger UI доступен по адресу `http://localhost:8080/swagger-ui.html` — без каких-либо дополнительных настроек.
+
+OpenAPI JSON/YAML схема: `http://localhost:8080/v3/api-docs`.
+
+#### Настройка мета-информации (опционально)
+
+```kotlin
+@Configuration
+class OpenApiConfig {
+    @Bean
+    fun openApi(): OpenAPI = OpenAPI()
+        .info(
+            Info()
+                .title("Food Delivery API")
+                .version("1.0.0")
+                .description("REST API сервиса доставки еды")
+        )
+}
 ```
-или
-```shell
-./mvnw clean package
 
-java -jar target/*-SNAPSHOT.jar
+#### Swagger UI и Spring Security
+
+Если у вас настроена Spring Security (из ЛР-7), пути Swagger UI нужно явно разрешить в `SecurityFilterChain`:
+
+```kotlin
+.authorizeHttpRequests { auth ->
+    auth
+        .requestMatchers(
+            "/swagger-ui/**",
+            "/swagger-ui.html",
+            "/v3/api-docs/**"
+        ).permitAll()
+        // ... остальные правила
+}
 ```
-Если файл `./mvnw` или `./mvnw.cmd` отсутствует, то попробуйте выполнить ```mvn wrapper:wrapper```
 
-Если все работает - **ОТЛИЧНО!**
+#### Аннотирование контроллеров
 
-4. Далее создадим контроллер для первого эндпоинта в пакете `controller`.  
-![Тут должен быть скриншот](./.assets/img/create-controller.png)  
+Основные аннотации из пакета `io.swagger.v3.oas.annotations`:
 
-5. В файле контроллера напишем следующий код:
+- `@Tag(name = "...")` — группировка эндпоинтов в UI
+- `@Operation(summary = "...")` — краткое описание метода
+- `@ApiResponse(responseCode = "200", description = "...")` — описание кода ответа
+- `@Parameter(description = "...")` — описание параметра запроса
+- `@Schema(description = "...")` — описание поля DTO
+
+Пример:
+
 ```kotlin
 @RestController
-@RequestMapping("/greeting")
-class HelloController {
+@RequestMapping("/api/restaurants")
+@Tag(name = "Restaurants", description = "Управление ресторанами")
+class RestaurantController(private val restaurantService: RestaurantService) {
 
-    @GetMapping
-    fun hello(): String {
-        return "Hello World"
-    }
-}
-```
-И проверим работу приложения. Запускается по той же схеме, что выше.  
-После запуска перейдите по ссылке `http://localhost:8080/greeting` в браузере.  
-Если в браузере вы увидели `Hello World` - значит все сделали правильно.
-
-6. Далее сделаем косметические улучшения в коде.  
-Добавим дата-класс в новый пакет `dto`
-```kotlin
-data class GreetingMain(
-    val text: String = "Hello World"
-)
-```
-И теперь будем вместо `String` возвращать объект этого класса.
-```kotlin
-@RestController
-@RequestMapping("/greeting")
-class HelloController {
-
-    @GetMapping
-    fun hello(): GreetingMain {
-        return GreetingMain()
-    }
+    @GetMapping("/{id}")
+    @Operation(summary = "Получить ресторан по ID")
+    @ApiResponses(
+        value = [
+            ApiResponse(responseCode = "200", description = "Ресторан найден"),
+            ApiResponse(responseCode = "404", description = "Ресторан не найден")
+        ]
+    )
+    fun getById(@PathVariable id: Long): ResponseEntity<RestaurantDto> =
+        ResponseEntity.ok(restaurantService.getById(id))
 }
 ```
 
-
-### Технологии тестирования REST API
-В данном разделе мы рассмотрим различные технологии для тестирования работоспособности rest api.
-
-#### 1. Самый простой способ - `curl`. Наш эндпоинт из примера выше тестируется простейшей командой:
-```shell
-curl http://localhost:8080/greeting
-```
-или для подробного вывода:
-```shell
-curl -v http://localhost:8080/greeting
-```
-ну или более сложные запросы:
-```shell
-# POST с JSON
-curl -X POST http://localhost:8080/api/v1/users \
-  -H "Content-Type: application/json" \
-  -d '{"name": "John", "email": "john@mail.com"}'
-
-# С авторизацией
-curl -H "Authorization: Bearer eyJhbG..." \
-  http://localhost:8080/api/v1/users
-```
-
-#### 2. Postman / Bruno.  
-Postman и Bruno — это графические инструменты для отправки HTTP-запросов к API. Они позволяют легко формировать GET, 
-   POST, PUT, DELETE запросы с нужными заголовками и телом, видеть ответ сервера, сохранять запросы в коллекции и использовать переменные окружения.  
-Главное отличие: `Postman` хранит коллекции в облаке, а `Bruno` — в виде текстовых файлов прямо в проекте, что 
-   удобно для Git.  
-Далее здесь будет продемонстрирован пример работы с `Bruno`. Для Postman действия аналогичные, за исключением пары 
-   нюансов.  
-
-- Для начала создадим рабочее пространство:  
-![Тут должен быть скриншот](./.assets/img/bruno-workspace.png)  
-- В созданном рабочем пространстве создадим коллекцию запросов (Формат делайте `yaml`):  
-![Тут должен быть скриншот](./.assets/img/bruno-collection.png)  
-- Далее создадим окружение для рабочего пространства. Тут мы сможем хранить константы (url-ки, токены и тд):  
-![Тут должен быть скриншот](./.assets/img/bruno-environment.png)  
-- В переменную окружения запишем url приложения и сохраняем:  
-![Тут должен быть скриншот](./.assets/img/bruno-base-url.png)  
-- Теперь вы можете использовать переменную окружения для составления запросов:  
-![Тут должен быть скриншот](./.assets/img/bruno-request.png)  
-- Теперь запрос можно выполнить и проверить работоспособность эндпоинта с помощью удобного ~~нет~~ интерфейса:  
-![Тут должен быть скриншот](.assets/img/bruno-executed-request.png)    
-
-Ну вот допустим вы сделали запрос и запустили его. Но вот вам нужно проверить, что статус код именно такой как вам нужно (не 201, не 300, не 400 и тд). Как тогда поступить? Ведь если вам нужен код ошибки (негативное тестирование), то бруно посчитает, что запрос выполнился некорректно.  
-Тут на помощь приходят скрипты для запросов. С их помощью можно провести тестирование результатов запроса:  
-- В окне запроса откроем вкладку `Script` -> `Post Response` и напишем следующий скрипт на проверку статус кода и наличия поля в json ответа:  
-```js
-test("Статус ответа должен быть 200", function() {
-  expect(res.status).to.equal(200);
-});
-
-test("Поле 'text' существует и не является пустым", function() {
-  const data = res.body;
-  
-  // Проверяем, что поле существует (не undefined)
-  expect(data).to.have.property("text");
-  
-  // Проверяем, что это строка
-  expect(data.text).to.be.a('string');
-  
-  // Проверяем, что длина строки больше 0
-  expect(data.text.length).to.be.greaterThan(0);
-});
-```
-- Затем запустим запрос и увидим вкладку `Tests` у результата запроса. Если вы сделали все правильно, то оба теста будут зелеными:  
-![Тут должен быть скриншот](./.assets/img/bruno-test-result.png)  
-
-#### 3. Connekt  
-Следующий инструмент для тестирования апи - `Connekt`. Поставляется он вместе с плагином `Amplicode` и работает на kotlin. Чтобы создать тест-скрипт, сделаем новую директорию в репозитории и назовем ее `.requests`, там средствами IDE создадим connekt-скрипт. По-умолчанию там уже содержится примерный код. Если код подсвечивается красным, перезагрузите IDE, обычно это помогает.  
-
-- Для начала удалим примерный код и напишем следующий для тестирования нашего эндпоинта:  
-```kotlin
-GET("http://localhost:8080/greeting") {
-    accept("application/json")
-} then {
-    Assertions.assertThat(code).isEqualTo(200)
-}
-```
-
-- Каждый раз писать url неудобно, поэтому тут как и в Postman/Bruno есть механизм окружений. Чтобы создать окружение, нажмем `Create environment` ^-^  
-![Тут должен быть скриншот](./.assets/img/connekt-create-environment.png)
-- В созданном файле добавим переменную окружения:
-```json
-{
-  "local": {
-    "baseUrl": "http://localhost:8080"
-  }
-}
-```
-- Теперь можно использовать переменную окружения в скрипте:
-```kotlin
-val baseUrl: String by env
-val path = "greeting"
-
-GET("$baseUrl/$path") {
-    accept("application/json")
-} then {
-    Assertions.assertThat(code).isEqualTo(200)
-}
-```
-- Также если возникают затруднения, можно ознакомиться с примерами, прямо в IDE:  
-![Тут должен быть скриншот](.assets/img/connekt-examples.png)
+Аннотировать все эндпоинты необязательно — SpringDoc подхватит их автоматически. Аннотации нужны там, где автоматически сгенерированное описание недостаточно понятно.
 
 ---
 
-## Задание
-Используя этот репозиторий в качестве шаблона, выполните следующие задания.
+### 2) Dockerfile: упаковка приложения
 
-1. В соответствии со спецификацией, определенной в файле `specs.yaml`, добавьте недостающие эндпоинты в контроллер. Обратите внимание, что первый эндпоинт имеет разное поведение в зависимости от наличия параметра запроса.
-2. Проведите тестрование рассмотренными ранее средствами (Bruno, Connekt, Postman (экспортируйте в json)):
-   - В каждом инструменте проведите тестирование всех эндпоинтов. 
-   - Url храните в переменных среды.
-   - Сделайте проверку сохранения пользователя (сохраняйте id пользователя после пост запроса, потом отправляйте его)
+#### Принцип работы
+
+Docker упаковывает приложение и его окружение (JRE, конфиги) в образ — изолированный исполняемый пакет. Образ одинаково запускается на любой машине, где установлен Docker.
+
+#### Multi-stage сборка
+
+Наивный подход — скопировать уже собранный JAR в образ:
+
+```dockerfile
+FROM eclipse-temurin:21-jre
+COPY target/*.jar app.jar
+ENTRYPOINT ["java", "-jar", "app.jar"]
+```
+
+Проблема: нужно сначала собрать JAR локально командой `mvn package`, и `target/` должен существовать до сборки образа.
+
+Лучший вариант — **multi-stage build**: Maven запускается внутри контейнера, итоговый образ содержит только JRE и JAR:
+
+```dockerfile
+# Stage 1: сборка
+FROM eclipse-temurin:21-jdk AS builder
+WORKDIR /app
+COPY . .
+RUN ./mvnw package -DskipTests
+
+# Stage 2: runtime
+FROM eclipse-temurin:21-jre
+WORKDIR /app
+COPY --from=builder /app/target/*.jar app.jar
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "app.jar"]
+```
+
+Финальный образ не содержит JDK, Maven и исходников — только JRE (~270 MB) и JAR. Это важно для безопасности и размера.
+
+#### .dockerignore
+
+Аналог `.gitignore` — указывает, что не нужно копировать в контекст сборки. Ускоряет сборку и исключает чувствительные файлы:
+
+```
+target/
+.git/
+.github/
+.idea/
+*.md
+.env
+```
+
+> `target/` не нужен: в multi-stage сборке Maven работает внутри контейнера.
+
+#### Проверка локально
+
+```bash
+docker build -t food-delivery:latest .
+docker run -p 8080:8080 food-delivery:latest
+```
 
 ---
 
-## PS
-Файлы, которые уже лежат в репозитории `не изменяйте`
+### 3) Docker Compose: поднять весь стек
+
+В ЛР-4 вы уже добавили docker-compose.yaml с сервисом `postgres`. Теперь добавьте к нему два новых сервиса: `app` (ваш REST API) и `pgadmin` (веб-интерфейс для базы данных).
+
+#### Сети
+
+Все сервисы в одном compose-файле по умолчанию оказываются в одной сети. Docker DNS резолвит имя сервиса в IP контейнера — поэтому в `SPRING_DATASOURCE_URL` нужно писать имя сервиса (`postgres`), а не `localhost`.
+
+#### healthcheck + depends_on
+
+Без `condition: service_healthy` приложение может стартовать раньше, чем postgres будет готов принимать соединения — Spring выбросит исключение при старте. Решение:
+
+1. Добавить `healthcheck` на сервис `postgres` — он периодически проверяет готовность через `pg_isready`.
+2. Добавить `depends_on` с `condition: service_healthy` на сервис `app` — compose дождётся зелёного статуса перед запуском приложения.
+
+#### pgAdmin
+
+Образ: `dpage/pgadmin4`. После запуска pgAdmin доступен в браузере. Для подключения к БД внутри pgAdmin в качестве хоста укажите имя сервиса postgres в compose-файле — Docker DNS сам разрешит его в нужный IP.
+
+#### Переменные окружения: .env файл
+
+Хранить логины и пароли прямо в docker-compose.yaml — плохая практика: они попадут в git. Docker Compose автоматически читает файл `.env` из той же директории и подставляет переменные через синтаксис `${VAR_NAME}`.
+
+Пример `.env`:
+
+```
+POSTGRES_DB=delivery
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+PGADMIN_EMAIL=admin@admin.com
+PGADMIN_PASSWORD=admin
+```
+
+В docker-compose.yaml переменные используются так:
+
+```yaml
+environment:
+  POSTGRES_DB: ${POSTGRES_DB}
+  POSTGRES_USER: ${POSTGRES_USER}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+```
+
+Файл `.env` **не должен попасть в git** — добавьте его в `.gitignore`. Вместо него коммитьте `.env.example` с теми же ключами, но пустыми значениями — это документация для других разработчиков.
+
+#### Команды
+
+```bash
+docker compose up --build     # собрать образ и поднять стек
+docker compose up -d           # в фоне
+docker compose down            # остановить и удалить контейнеры
+docker compose logs -f app     # смотреть логи приложения
+```
 
 ---
 
-## Таблица критериев оценки
+### 4) GitHub Actions: публикация образа (CD)
 
-| Категория                      | Критерий                 | Описание                                                                                                                  |  Баллы  |
-|:-------------------------------|:-------------------------|:--------------------------------------------------------------------------------------------------------------------------|:-------:|
-| **Штрафы**                     | **Существующие тесты**   | Если не проходят существующие Unit-тесты (которые были в шаблоне)                                | **-10** |
-|                                |                          |                                                                                                                           |         |
-| **1. API (10 баллов)**         | **Спецификация OpenAPI** | Все эндпоинты реализованы строго по файлу `specs.yaml` (правильные URL, методы, коды ответов, поля JSON).                 |  **4**  |
-|                                | **Логика GET /greeting** | Корректно реализовано разделение логики: запрос без параметров возвращает приветствие, запрос с `?id=` ищет пользователя. |  **4**  |
-|                                | **Бизнес-логика**        | Корректная генерация UUID при создании, сохранение в переменную, возврат 404 при отсутствии пользователя.                 |  **2**  |
-|                                |                          |                                                                                                                           |         |
-| **2. Тестирование (9 баллов)** | **Postman**              | 1. Коллекция экспортирована в JSON.<br>2. URL вынесен в переменные окружения.<br>3. Реализован сценарии.                  |  **3**  |
-|                                | **Bruno**                | 1. Файлы коллекции присутствуют.<br>2. URL в переменных окружения.<br>3. Реализованы сценарии.                            |  **3**  |
-|                                | **Connekt**              | 1. Файлы/Конфиг присутствуют.<br>2. URL в переменных окружения.<br>3. Реализованы сценарий.                               |  **3**  |
-|                                |                          |                                                                                                                           |         |
-| **3. Оформление (1 балл)**     | **Культура кода**        | Чистота кода, отсутствие лишних файлов в репозитории (правильный `.gitignore`), тесты лежат в папке `tests/`.             |  **1**  |
-|                                |                          |                                                                                                                           |         |
-| **ИТОГО**                      |                          | **Максимальный балл**                                                                                                     | **20**  |
+До сих пор `ci.yaml` запускал тесты на каждый PR. Теперь добавим `cd.yaml`, который будет собирать образ и отправлять его в реестр при каждом push в основную ветку.
+
+Разделение на два файла — стандартная практика:
+- **CI** (Continuous Integration) — проверяем качество на PR, до мержа
+- **CD** (Continuous Delivery) — доставляем артефакт после мержа в main
+
+Вы можете выбрать **один** из двух реестров — DockerHub или GHCR.
 
 ---
 
-## Что почитать?
-- [Swagger](https://swagger.io/tools/swagger-editor/)
-- [Spring boot Rest](https://spring.io/guides/tutorials/rest)
-- [OpenIDE](https://openide.ru/download)
-- [Amplicode](https://amplicode.ru/)
-- [Connekt обзор](https://habr.com/ru/companies/domclick/articles/965116/)
-- [Bruno docs](https://docs.usebruno.com/)
-- [Postman docs](https://learning.postman.com/docs/introduction/overview)
+#### Вариант A: DockerHub
+
+**Подготовка:**
+1. Зарегистрируйтесь на [hub.docker.com](https://hub.docker.com)
+2. Account Settings → Security → **New Access Token** (разрешения: Read, Write, Delete). Скопируйте токен — он показывается только один раз.
+3. Откройте ваш репозиторий на GitHub → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**. Добавьте два секрета:
+    - `DOCKERHUB_USERNAME` — ваш логин на DockerHub
+    - `DOCKERHUB_TOKEN` — токен из шага 2
+
+Секреты зашифрованы и недоступны для чтения после сохранения. В логах Actions они автоматически маскируются (`***`).
+
+```yaml
+# .github/workflows/cd.yaml
+name: CD
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/food-delivery:latest
+```
+
+Образ будет доступен по адресу `docker.io/<ваш-логин>/food-delivery:latest`.
+
+---
+
+#### Вариант B: GHCR (GitHub Container Registry)
+
+GHCR встроен в GitHub и не требует отдельного аккаунта. Каждый GitHub Actions workflow автоматически получает временный `GITHUB_TOKEN` — именно он используется для аутентификации.
+
+**Подготовка:** Никакой. Только добавьте `permissions` в файл workflow (см. ниже).
+
+```yaml
+# .github/workflows/cd.yaml
+name: CD
+
+on:
+  push:
+    branches: [ master ]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/food-delivery:latest
+```
+
+После успешного прогона образ появится в разделе **Packages** вашего GitHub-профиля.
+
+---
+
+### 5) ci.yaml: проверьте триггер
+
+У вас уже есть `ci.yaml` с предыдущих работ. Убедитесь, что он запускается на pull request в основную ветку:
+
+```yaml
+on:
+  pull_request:
+    branches: [ master ]
+```
+
+Если стоит `push` или `workflow_dispatch` — замените или добавьте `pull_request`.
+
+---
+
+## Практическое задание
+
+### 1) SpringDoc
+
+- Добавьте зависимость в `pom.xml`
+- Если настроена Spring Security — откройте пути Swagger UI в `SecurityFilterChain`
+- Аннотируйте минимум **3 эндпоинта**: `@Operation`, `@ApiResponse`
+- Убедитесь: `http://localhost:8080/swagger-ui.html` открывается и отображает ваш API
+
+### 2) Dockerfile
+
+- Создайте `Dockerfile` в корне проекта (multi-stage: builder + runtime)
+- Создайте `.dockerignore`
+- Убедитесь: `docker build -t food-delivery .` завершается без ошибок
+
+### 3) docker-compose.yaml
+
+- К существующему сервису `postgres` добавьте `app` и `pgadmin`
+- Добавьте `healthcheck` для postgres и `depends_on: condition: service_healthy` для app
+- Вынесите все переменные окружения в `.env`, добавьте `.env` в `.gitignore`, создайте `.env.example` с теми же ключами и пустыми значениями
+- Убедитесь: `docker compose up --build` поднимает все три сервиса, приложение стартует и отвечает на запросы
+
+### 4) cd.yaml
+
+- Создайте `.github/workflows/cd.yaml`
+- Выберите реестр: DockerHub или GHCR
+- Добавьте нужные секреты в GitHub (для DockerHub)
+- Сделайте push в основную ветку — workflow должен отработать, образ должен появиться в реестре
+
+### 5) ci.yaml
+
+- Проверьте триггер — должен быть `pull_request` на основную ветку
+- Если нет — исправьте
+
+---
+
+## Критерии оценки (максимум 15 баллов)
+
+| Категория              | Критерий                                                                     | Баллы  |
+|:-----------------------|:-----------------------------------------------------------------------------|:------:|
+| SpringDoc              | Зависимость добавлена, Swagger UI открывается, аннотации на 3+ эндпоинтах   |   3    |
+| Dockerfile             | Multi-stage build, корректный ENTRYPOINT, `.dockerignore`                    |   4    |
+| docker-compose         | Сервисы app + pgAdmin, переменные через `.env`, `.env.example` в репозитории |   3    |
+| healthcheck + порядок  | `healthcheck` на postgres, `depends_on: condition: service_healthy` для app  |   3    |
+| cd.yaml                | Собирает образ и пушит в реестр (DockerHub или GHCR)                         |   2    |
+| **Итого**              |                                                                              | **15** |
+
+Штраф: `ci.yaml` не имеет триггера на `pull_request` — **−2 балла**.
+
+---
+
+## Мини-чеклист перед сдачей
+
+1. `docker build .` завершается без ошибок.
+2. `docker compose up --build` поднимает postgres + app + pgadmin.
+3. На сервисе `postgres` настроен `healthcheck`, сервис `app` стартует только после его прохождения (`depends_on: condition: service_healthy`).
+4. Переменные окружения вынесены в `.env`, в репозитории есть `.env.example`, `.env` в `.gitignore`.
+5. Swagger UI доступен по `/swagger-ui.html` и отображает эндпоинты.
+6. cd.yaml сработал при последнем push в main — образ виден в реестре.
+7. ci.yaml триггерится на `pull_request`.
+
+---
+
+## Что почитать
+
+1. [SpringDoc OpenAPI](https://springdoc.org/)
+2. [SpringDoc + Spring Security](https://springdoc.org/#spring-security-integration)
+3. [Swagger Annotations](https://github.com/swagger-api/swagger-core/wiki/Swagger-2.X---Annotations)
+4. [Dockerfile reference](https://docs.docker.com/reference/dockerfile/)
+5. [Docker multi-stage builds](https://docs.docker.com/build/building/multi-stage/)
+6. [Docker Compose reference](https://docs.docker.com/compose/compose-file/)
+7. [docker/login-action](https://github.com/docker/login-action)
+8. [docker/build-push-action](https://github.com/docker/build-push-action)
+9. [DockerHub access tokens](https://docs.docker.com/security/for-developers/access-tokens/)
+10. [GitHub Container Registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
