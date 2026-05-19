@@ -6,6 +6,7 @@ import com.example.spring_jpa.application.service.RestaurantService
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.MediaType
+import org.springframework.security.test.context.support.WithMockUser
 import org.springframework.test.annotation.Rollback
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.*
@@ -20,6 +21,8 @@ class RestaurantControllerTest : AbstractIntegrationTest() {
 
     private fun createRestaurant(name: String = "Test Restaurant", address: String = "Test Address") =
         restaurantService.create(CreateRestaurantRequest(name = name, address = address))
+
+    // --- GET endpoints (public, no auth needed) ---
 
     @Test
     fun `GET all restaurants returns 200 and list`() {
@@ -50,7 +53,25 @@ class RestaurantControllerTest : AbstractIntegrationTest() {
     }
 
     @Test
-    fun `POST create restaurant returns 201 and created restaurant`() {
+    fun `GET dishes by restaurant id returns 200 and empty list`() {
+        val restaurant = createRestaurant()
+
+        mockMvc.perform(get("/api/v1/restaurants/${restaurant.id}/dishes"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$").isArray)
+    }
+
+    @Test
+    fun `GET dishes with non-existent restaurant id returns 404`() {
+        mockMvc.perform(get("/api/v1/restaurants/999999/dishes"))
+            .andExpect(status().isNotFound)
+    }
+
+    // --- POST (ADMIN only) ---
+
+    @Test
+    @WithMockUser(roles = ["ADMIN"])
+    fun `POST create restaurant as ADMIN returns 201`() {
         mockMvc.perform(
             post("/api/v1/restaurants")
                 .contentType(MediaType.APPLICATION_JSON)
@@ -63,13 +84,12 @@ class RestaurantControllerTest : AbstractIntegrationTest() {
     }
 
     @Test
+    @WithMockUser(roles = ["ADMIN"])
     fun `POST with blank name returns 400 validation error`() {
-        val body = """{"name": "", "address": "Some Address"}"""
-
         mockMvc.perform(
             post("/api/v1/restaurants")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(body)
+                .content("""{"name": "", "address": "Some Address"}""")
         )
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.status").value(400))
@@ -77,6 +97,7 @@ class RestaurantControllerTest : AbstractIntegrationTest() {
     }
 
     @Test
+    @WithMockUser(roles = ["ADMIN"])
     fun `POST with duplicate name returns 409 conflict`() {
         createRestaurant(name = "Unique Bistro")
 
@@ -89,7 +110,10 @@ class RestaurantControllerTest : AbstractIntegrationTest() {
             .andExpect(jsonPath("$.message").exists())
     }
 
+    // --- PUT (ADMIN only) ---
+
     @Test
+    @WithMockUser(roles = ["ADMIN"])
     fun `PUT update restaurant returns 200 and updated data`() {
         val restaurant = createRestaurant(name = "Old Name")
 
@@ -104,6 +128,7 @@ class RestaurantControllerTest : AbstractIntegrationTest() {
     }
 
     @Test
+    @WithMockUser(roles = ["ADMIN"])
     fun `PUT with non-existent id returns 404`() {
         mockMvc.perform(
             put("/api/v1/restaurants/999999")
@@ -113,7 +138,10 @@ class RestaurantControllerTest : AbstractIntegrationTest() {
             .andExpect(status().isNotFound)
     }
 
+    // --- DELETE (ADMIN only) ---
+
     @Test
+    @WithMockUser(roles = ["ADMIN"])
     fun `DELETE restaurant returns 204`() {
         val restaurant = createRestaurant(name = "To Delete")
 
@@ -122,23 +150,43 @@ class RestaurantControllerTest : AbstractIntegrationTest() {
     }
 
     @Test
+    @WithMockUser(roles = ["ADMIN"])
     fun `DELETE with non-existent id returns 404`() {
         mockMvc.perform(delete("/api/v1/restaurants/999999"))
             .andExpect(status().isNotFound)
     }
 
-    @Test
-    fun `GET dishes by restaurant id returns 200 and empty list`() {
-        val restaurant = createRestaurant()
+    // --- Security tests ---
 
-        mockMvc.perform(get("/api/v1/restaurants/${restaurant.id}/dishes"))
-            .andExpect(status().isOk)
-            .andExpect(jsonPath("$").isArray)
+    @Test
+    fun `POST create restaurant without token returns 401`() {
+        mockMvc.perform(
+            post("/api/v1/restaurants")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"name": "Test", "address": "Address"}""")
+        )
+            .andExpect(status().isUnauthorized)
     }
 
     @Test
-    fun `GET dishes with non-existent restaurant id returns 404`() {
-        mockMvc.perform(get("/api/v1/restaurants/999999/dishes"))
-            .andExpect(status().isNotFound)
+    @WithMockUser(roles = ["USER"])
+    fun `POST create restaurant as USER returns 403`() {
+        mockMvc.perform(
+            post("/api/v1/restaurants")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"name": "Test", "address": "Address"}""")
+        )
+            .andExpect(status().isForbidden)
+    }
+
+    @Test
+    fun `POST create restaurant with invalid token returns 401`() {
+        mockMvc.perform(
+            post("/api/v1/restaurants")
+                .header("Authorization", "Bearer invalid.token.here")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"name": "Test", "address": "Address"}""")
+        )
+            .andExpect(status().isUnauthorized)
     }
 }
