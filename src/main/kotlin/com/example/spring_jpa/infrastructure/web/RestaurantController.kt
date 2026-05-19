@@ -9,6 +9,7 @@ import com.example.spring_jpa.application.service.RestaurantService
 import jakarta.validation.Valid
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
+import org.springframework.security.access.prepost.PreAuthorize
 import org.springframework.web.bind.annotation.*
 
 @RestController
@@ -27,12 +28,14 @@ class RestaurantController(
         ResponseEntity.ok(RestaurantResponse.fromDomain(restaurantService.findById(id)))
 
     @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
     fun create(@Valid @RequestBody request: CreateRestaurantRequest): ResponseEntity<RestaurantResponse> {
         val restaurant = restaurantService.create(request)
         return ResponseEntity.status(HttpStatus.CREATED).body(RestaurantResponse.fromDomain(restaurant))
     }
 
     @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     fun update(
         @PathVariable id: Long,
         @Valid @RequestBody request: CreateRestaurantRequest
@@ -40,6 +43,7 @@ class RestaurantController(
         ResponseEntity.ok(RestaurantResponse.fromDomain(restaurantService.update(id, request)))
 
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
     fun delete(@PathVariable id: Long): ResponseEntity<Void> {
         restaurantService.deleteById(id)
         return ResponseEntity.noContent().build()
@@ -50,6 +54,7 @@ class RestaurantController(
         ResponseEntity.ok(restaurantService.findDishesByRestaurantId(id).map { DishResponse.fromDomain(it) })
 
     @PostMapping("/{id}/dishes")
+    @PreAuthorize("hasRole('ADMIN')")
     fun createDish(
         @PathVariable id: Long,
         @Valid @RequestBody request: CreateDishRequest
