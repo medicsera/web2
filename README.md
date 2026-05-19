@@ -1,12 +1,12 @@
-# Лабораторная работа №9
+# Лабораторная работа №10
 
-## Кэширование: Redis и Spring Cache
+## Асинхронность и планировщик: корутины, @Scheduled, Spring Mail
 
 ---
 
 ## Цель работы
 
-Добавить в проект доставки еды из ЛР-8 слой кэширования: подключить Redis, настроить Spring Cache и закэшировать горячие read-эндпоинты. Реализовать инвалидацию кэша при изменении данных.
+Добавить в проект доставки еды асинхронную обработку задач и плановые фоновые операции: уведомления по email при смене статуса заказа и автоматическая отмена зависших заказов.
 
 ---
 
@@ -18,315 +18,367 @@
 
 ## Теоретический блок
 
-### 1) Зачем нужен кэш
+### 1) @Async: старый подход (кратко)
 
-Каждый GET-запрос в вашем сервисе сейчас идёт в PostgreSQL. Большинство данных при этом не меняется между запросами: список ресторанов, меню конкретного заведения, информация о блюде. Если к API обратятся 100 пользователей подряд с запросом `GET /api/v1/restaurants`, БД выполнит один и тот же SELECT 100 раз.
+До появления корутин в Kotlin асинхронность в Spring решалась через аннотацию `@Async`. Метод, помеченный `@Async`, выполняется в отдельном потоке из пула — HTTP-ответ уходит клиенту немедленно.
 
-Кэш решает это: результат первого запроса сохраняется во временном хранилище. Следующие 99 запросов получают ответ из кэша — без обращения к БД. Выигрыш двойной:
-- **Latency** — ответ из Redis приходит за ~1 мс против ~10–50 мс из БД.
-- **Нагрузка** — БД разгружается и может обслуживать записи и сложные запросы.
+Для включения нужны `@EnableAsync` и, опционально, явно настроенный пул потоков:
 
-Кэш не серебряная пуля. Он добавляет сложность: нужно следить за актуальностью данных, настраивать TTL, думать об инвалидации. Кэшировать стоит данные, которые:
-- Читаются часто (hot path)
-- Изменяются редко
-- Дорого вычисляются
+```kotlin
+@SpringBootApplication
+@EnableAsync
+class DeliveryApplication
 
-Список ресторанов и меню — хрестоматийный пример таких данных.
+@Service
+class NotificationService(private val mailSender: JavaMailSender) {
 
----
-
-### 2) Redis: что это и зачем
-
-**Redis** (Remote Dictionary Server) — хранилище данных в памяти (in-memory). В отличие от PostgreSQL, Redis не пишет каждую операцию на диск синхронно — он держит все данные в RAM, поэтому работает на порядки быстрее.
-
-Redis не только кэш: это многофункциональное хранилище со своими структурами данных:
-
-| Структура | Команды | Пример использования |
-|:--|:--|:--|
-| String | GET, SET, INCR | Кэш одного объекта, счётчики |
-| Hash | HGET, HSET | Кэш объекта с полями |
-| List | LPUSH, RPOP | Очереди задач |
-| Set | SADD, SMEMBERS | Уникальные значения |
-| Sorted Set | ZADD, ZRANGE | Рейтинги, топы |
-| Stream | XADD, XREAD | Событийный лог |
-
-В рамках этой лабораторной Redis используется как кэш для Spring Cache — взаимодействие идёт через Spring-абстракцию, а не напрямую через Redis-команды.
-
-#### Подключение Redis через docker-compose
-
-Добавьте Redis в ваш `docker-compose.yml`:
-
-```yaml
-services:
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-volumes:
-  redis_data:
+    @Async
+    fun sendEmail(to: String, subject: String, text: String) {
+        mailSender.send(SimpleMailMessage().apply {
+            setTo(to)
+            this.subject = subject
+            this.text = text
+        })
+    }
+}
 ```
 
-Флаг `--appendonly yes` включает AOF-персистентность: Redis записывает каждую команду в файл, чтобы данные пережили рестарт.
+Главное ограничение: вызов `@Async`-метода из того же класса не работает — Spring не успевает создать прокси, и метод выполнится синхронно. Это источник трудноуловимых багов.
+
+В современных Kotlin-проектах `@Async` вытеснён корутинами — они гибче, выразительнее и лишены proxy-ловушки. Далее в лабе используем корутины.
 
 ---
 
-### 3) Spring Cache: абстракция над хранилищем
+### 2) Kotlin корутины в Spring Boot
 
-Spring Cache — это слой абстракции, который позволяет добавить кэширование через аннотации, не завязываясь на конкретное хранилище. Один и тот же код будет работать с Redis, Caffeine (in-memory), EhCache или любым другим провайдером — нужно только поменять конфигурацию.
+Корутины — механизм конкурентности в Kotlin, который позволяет писать асинхронный код в линейном стиле без callback-ада и лишних потоков. Корутина — это лёгкая «сопрограмма»: она может приостановиться (`suspend`) без блокировки потока и возобновиться позже.
 
 #### Зависимости
 
 ```xml
-<!-- Starter для Spring Cache + Redis -->
 <dependency>
-    <groupId>org.springframework.boot</groupId>
-    <artifactId>spring-boot-starter-data-redis</artifactId>
+    <groupId>org.jetbrains.kotlinx</groupId>
+    <artifactId>kotlinx-coroutines-core</artifactId>
 </dependency>
 <dependency>
-    <groupId>org.springframework.boot</groupId>
-    <artifactId>spring-boot-starter-cache</artifactId>
+    <groupId>org.jetbrains.kotlinx</groupId>
+    <artifactId>kotlinx-coroutines-reactor</artifactId>
 </dependency>
 ```
 
-#### Включение кэша
+Версии управляются Spring Boot BOM — указывать не нужно.
 
-Добавьте `@EnableCaching` в конфигурационный класс или главный класс приложения:
+`coroutines-core` — основная библиотека корутин. `coroutines-reactor` нужен для интеграции с внутренними механизмами Spring (в частности, чтобы `suspend`-методы в контроллерах работали корректно в Spring MVC).
 
-```kotlin
-@SpringBootApplication
-@EnableCaching
-class DeliveryApplication
+#### CoroutineScope: правильный способ запуска
 
-fun main(args: Array<String>) {
-    runApplication<DeliveryApplication>(*args)
-}
-```
-
-#### Настройка в application.yaml
-
-```yaml
-spring:
-  data:
-    redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
-  cache:
-    type: redis
-    redis:
-      time-to-live: 300000  # 5 минут в миллисекундах
-```
-
----
-
-### 4) Конфигурация Redis как кэша
-
-По умолчанию Spring Data Redis сериализует объекты через Java Serialization — это неудобно (классы должны реализовывать `Serializable`) и нечитаемо в Redis-клиенте. Лучше использовать JSON через Jackson:
+Каждая корутина запускается внутри `CoroutineScope` — он отвечает за её жизненный цикл и отмену. Правильный подход — создать scope как Spring-бин и инжектить его в сервисы:
 
 ```kotlin
 @Configuration
-class CacheConfig {
+class CoroutineConfig {
 
     @Bean
-    fun redisCacheManagerBuilderCustomizer(
-        objectMapper: ObjectMapper
-    ): RedisCacheManagerBuilderCustomizer {
-        val serializer = GenericJackson2JsonRedisSerializer(objectMapper)
-        val serializationPair = RedisSerializationContext.SerializationPair
-            .fromSerializer(serializer)
-
-        return RedisCacheManagerBuilderCustomizer { builder ->
-            builder.cacheDefaults(
-                RedisCacheConfiguration.defaultCacheConfig()
-                    .entryTtl(Duration.ofMinutes(5))
-                    .serializeValuesWith(serializationPair)
-                    .disableCachingNullValues()
-            )
-        }
-    }
+    fun applicationScope(): CoroutineScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.IO)
 }
 ```
 
-Что настраивается:
-- **Сериализация**: JSON вместо Java Serialization — данные читаемы в `redis-cli`.
-- **TTL**: время жизни записи. После истечения Redis удаляет её автоматически.
-- **Null values**: `disableCachingNullValues()` — не кэшируем `null`, иначе кэшируется "объект не найден" и при следующем создании клиент получит `null` из кэша вместо реального объекта.
-
-> **Важно для Kotlin**: Jackson по умолчанию не знает о Kotlin-специфике (data class, nullable типы). Убедитесь, что в проекте подключён `jackson-module-kotlin`:
-> ```xml
-> <dependency>
->     <groupId>com.fasterxml.jackson.module</groupId>
->     <artifactId>jackson-module-kotlin</artifactId>
-> </dependency>
-> ```
-> Spring Boot подключает его автоматически, если он есть в classpath.
-
----
-
-### 5) @Cacheable: кэширование результата метода
-
-`@Cacheable` — основная аннотация. При первом вызове метода результат сохраняется в кэше. При последующих вызовах с теми же параметрами метод не выполняется, а результат берётся из кэша.
+`SupervisorJob` — важная деталь: если одна дочерняя корутина падает с исключением, остальные продолжают работу. Без него падение одной отменяет весь scope.
 
 ```kotlin
 @Service
-class RestaurantService(
-    private val restaurantRepository: RestaurantRepositoryPort
+class NotificationService(
+    private val mailSender: JavaMailSender,
+    private val scope: CoroutineScope
 ) {
     private val logger = KotlinLogging.logger {}
 
-    @Cacheable(cacheNames = ["restaurants"])
-    fun getAll(): List<Restaurant> {
-        logger.info { "Загрузка всех ресторанов из БД" }
-        return restaurantRepository.findAll()
-    }
-
-    @Cacheable(cacheNames = ["restaurants"], key = "#id")
-    fun getById(id: Long): Restaurant {
-        logger.info { "Загрузка ресторана id=$id из БД" }
-        return restaurantRepository.findById(id)
-            ?: throw NotFoundException("Ресторан с id=$id не найден")
+    fun sendOrderStatusUpdate(to: String, orderId: Long, status: String) {
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    mailSender.send(SimpleMailMessage().apply {
+                        setTo(to)
+                        subject = "Заказ #$orderId: статус изменён"
+                        text = "Новый статус: $status"
+                    })
+                }
+            }.onFailure { ex ->
+                logger.error(ex) { "Не удалось отправить уведомление на $to" }
+            }
+        }
     }
 }
 ```
 
-#### Как формируется ключ кэша
+`scope.launch` запускает корутину и сразу возвращает управление — `sendOrderStatusUpdate` не блокирует вызывающий код.
 
-Redis хранит данные в виде пар ключ-значение. Spring Cache автоматически формирует ключ из имени кэша и параметров метода:
+#### scope.launch vs withContext
 
-- `getAll()` → ключ: `restaurants::SimpleKey []`
-- `getById(1L)` → ключ: `restaurants::1`
-- `getById(2L)` → ключ: `restaurants::2`
+Это два разных инструмента, которые часто путают:
 
-Параметр `key` принимает SpEL-выражение. `#id` — значение параметра с именем `id`:
+| | `scope.launch { }` | `withContext(Dispatcher) { }` |
+|:---|:---|:---|
+| Что делает | Запускает **новую** корутину | Переключает диспетчер **внутри** текущей корутины |
+| Вызывающий код | Не ждёт — fire-and-forget | Ждёт завершения блока |
+| Где вызывать | Из обычной функции или корутины | Только из `suspend`-функции или корутины |
+| Возвращает | `Job` (можно отменить) | Результат блока |
+| Типичный сценарий | Запустить фоновую задачу и забыть | Сделать блокирующий вызов, не блокируя поток |
+
+Пример, который показывает оба в одном месте:
 
 ```kotlin
-// #id — значение параметра id
-@Cacheable(cacheNames = ["dishes"], key = "#restaurantId")
-fun getDishesByRestaurant(restaurantId: Long): List<Dish>
-
-// Составной ключ
-@Cacheable(cacheNames = ["orders"], key = "#userId + '_' + #status")
-fun getOrdersByUserAndStatus(userId: Long, status: OrderStatus): List<Order>
+// Обычная функция — вызывается из OrderService
+fun sendOrderStatusUpdate(to: String, orderId: Long, status: String) {
+    scope.launch {                           // (1) запускаем новую корутину, не ждём
+        withContext(Dispatchers.IO) {         // (2) внутри — переключаемся на IO-поток
+            mailSender.send(...)             //     здесь выполняется блокирующий вызов
+        }
+    }
+    // сюда попадаем сразу, не дожидаясь отправки письма
+}
 ```
 
-> **Логирование помогает проверить работу кэша.** Добавьте `logger.info` перед обращением к репозиторию. Если при повторном запросе лог не появляется — метод не вызывается, данные идут из кэша. Это нагляднее, чем смотреть на время ответа.
+`scope.launch` отвечает за то, что вызывающий код не блокируется. `withContext` отвечает за то, что блокирующий `mailSender.send` не занимает поток из корутинного пула.
+
+#### suspend-функции
+
+`suspend fun` — функция, которую можно приостанавливать. Её можно вызывать только из другой `suspend`-функции или из корутины. Если нужен результат фоновой операции, используйте `suspend` вместо `launch`:
+
+```kotlin
+// Вызвать можно только из корутины или другой suspend-функции
+suspend fun fetchRestaurantRating(id: Long): Double {
+    return withContext(Dispatchers.IO) {
+        externalApiClient.getRating(id)  // блокирующий вызов — безопасно на IO
+    }
+}
+```
+
+#### Что происходит при вызове эндпоинта: пошагово
+
+Возьмём `updateStatus` и проследим выполнение от запроса до ответа для двух версий.
+
+**Версия 1: suspend fun**
+
+```kotlin
+@PatchMapping("/orders/{id}/status")
+suspend fun updateStatus(@PathVariable id: Long, @RequestBody dto: StatusDto): OrderDto {
+    return orderService.updateStatus(id, dto.status)
+}
+
+suspend fun updateStatus(id: Long, status: String): OrderDto {
+    return withContext(Dispatchers.IO) {  // JPA-репозитории блокирующие
+        val order = orderRepository.findById(id)
+            ?: throw NotFoundException("Заказ $id не найден")
+        order.status = status
+        orderRepository.save(order).toDto()
+    }
+}
+```
+
+```
+[0 мс]  Клиент → PATCH /orders/1/status
+[0 мс]  Spring принимает запрос, выделяет поток
+[0 мс]  Контроллер вызывает orderService.updateStatus(1, "DELIVERED")
+[0 мс]  Сервис вызывает orderRepository.findById(1)
+          → корутина приостанавливается, поток ОСВОБОЖДЁН обратно в пул
+[5 мс]  БД ответила → корутина ВОЗОБНОВЛЯЕТСЯ на свободном потоке
+[5 мс]  Сервис вызывает orderRepository.save(order)
+          → корутина приостанавливается, поток ОСВОБОЖДЁН
+[8 мс]  БД ответила → корутина ВОЗОБНОВЛЯЕТСЯ
+[8 мс]  Сервис возвращает OrderDto контроллеру
+[8 мс]  Spring отправляет HTTP 200 {"id":1, "status":"DELIVERED"}
+[8 мс]  Клиент получает корректный ответ ✓
+
+— Если на шаге [5 мс] заказ не найден —
+[5 мс]  Сервис бросает NotFoundException
+[5 мс]  Исключение всплывает через контроллер в Spring
+[5 мс]  @RestControllerAdvice перехватывает → HTTP 404 {"message":"..."}
+[5 мс]  Клиент получает корректную ошибку ✓
+```
 
 ---
 
-### 6) @CacheEvict: инвалидация кэша
-
-Кэшированные данные устаревают при изменении. Если создать новый ресторан — список ресторанов в кэше содержит старые данные. `@CacheEvict` удаляет записи из кэша при вызове метода.
+**Версия 2: та же логика, но через scope.launch**
 
 ```kotlin
-@CacheEvict(cacheNames = ["restaurants"], allEntries = true)
-fun create(command: CreateRestaurantCommand): Restaurant {
-    val restaurant = restaurantRepository.save(command.toEntity())
-    logger.info { "Создан ресторан id=${restaurant.id}, кэш инвалидирован" }
-    return restaurant
+@PatchMapping("/orders/{id}/status")
+fun updateStatus(@PathVariable id: Long, @RequestBody dto: StatusDto): OrderDto? {
+    return orderService.updateStatus(id, dto.status)
 }
 
-@CacheEvict(cacheNames = ["restaurants"], allEntries = true)
-fun update(id: Long, command: UpdateRestaurantCommand): Restaurant {
-    val restaurant = restaurantRepository.findById(id)
-        ?: throw NotFoundException("Ресторан с id=$id не найден")
-    return restaurantRepository.save(restaurant.apply(command))
-}
-
-@CacheEvict(cacheNames = ["restaurants"], allEntries = true)
-fun delete(id: Long) {
-    if (!restaurantRepository.existsById(id)) {
-        throw NotFoundException("Ресторан с id=$id не найден")
+fun updateStatus(id: Long, status: String): OrderDto? {
+    var result: OrderDto? = null
+    scope.launch {
+        val order = orderRepository.findById(id)
+            ?: throw NotFoundException("Заказ $id не найден")
+        order.status = status
+        result = orderRepository.save(order).toDto()
     }
-    restaurantRepository.deleteById(id)
+    return result  // ← выполняется немедленно, до того как корутина что-то сделала
 }
 ```
 
-`allEntries = true` — удалить все записи в кэше `restaurants`. Это грубо, но надёжно: после создания ресторана неизвестно, какие конкретно ключи устарели (например, постраничные запросы). Для простой модели это правильный подход.
+```
+[0 мс]  Клиент → PATCH /orders/1/status
+[0 мс]  Spring принимает запрос, выделяет поток
+[0 мс]  Контроллер вызывает orderService.updateStatus(1, "DELIVERED")
+[0 мс]  Сервис запускает scope.launch { ... }
+          → корутина уходит в фон, scope.launch СРАЗУ возвращает Job
+[0 мс]  return result → result = null, функция вернула null ✗
+[0 мс]  Spring отправляет HTTP 200 null — ответ уже ушёл ✗
+[0 мс]  Клиент получил пустой ответ, данные ещё не сохранены
 
-Если нужно удалить только конкретную запись:
+  [параллельно, в фоне]
+  [5 мс]  Фоновая корутина: БД вернула заказ
+  [8 мс]  Фоновая корутина: заказ сохранён — но клиент об этом не узнает ✗
 
-```kotlin
-// Удалить только ресторан с этим id
-@CacheEvict(cacheNames = ["restaurants"], key = "#id")
-fun delete(id: Long)
+— Если на шаге [5 мс] заказ не найден —
+[5 мс]  Фоновая корутина бросает NotFoundException
+[5 мс]  @RestControllerAdvice НЕ перехватит — HTTP-ответ уже ушёл
+[5 мс]  Исключение уходит в CoroutineExceptionHandler → лог
+[0 мс]  Клиент уже получил HTTP 200, хотя ничего не произошло ✗
 ```
 
-#### Инвалидация связанных кэшей
-
-Когда меняется блюдо — устаревает не только кэш этого блюда, но и кэш меню ресторана. Для инвалидации нескольких кэшей используйте `@Caching`:
-
-```kotlin
-@Caching(evict = [
-    CacheEvict(cacheNames = ["dishes"], key = "#restaurantId"),
-    CacheEvict(cacheNames = ["restaurants"], allEntries = true)
-])
-fun addDish(restaurantId: Long, command: CreateDishCommand): Dish {
-    val restaurant = restaurantRepository.findById(restaurantId)
-        ?: throw NotFoundException("Ресторан с id=$restaurantId не найден")
-    return dishRepository.save(command.toEntity(restaurant))
-}
-```
+`scope.launch` физически не может вернуть результат вызывающему коду — функция возвращает `Job`, а не данные. Используйте `suspend fun` везде, где клиент ждёт результат. `scope.launch` — только для работы, которую запустили и забыли.
 
 ---
 
-### 7) @CachePut: обновление кэша
+#### Диспетчеры
 
-`@CachePut` выполняет метод **всегда** и сохраняет результат в кэш. В отличие от `@Cacheable`, не пропускает вызов метода. Удобно при обновлении: вместо инвалидации сразу кладём новое значение.
+| Диспетчер            | Для чего                                          |
+|:---------------------|:--------------------------------------------------|
+| `Dispatchers.IO`     | Блокирующий I/O: БД, файлы, сеть, отправка email |
+| `Dispatchers.Default`| CPU-интенсивные задачи: парсинг, вычисления       |
+| `Dispatchers.Main`   | UI-поток (не используется в бэкенде)             |
+
+#### Подводные камни
+
+**GlobalScope — не использовать.** `GlobalScope.launch` запускает корутину без привязки к жизненному циклу — при остановке приложения она не будет отменена, возможна утечка ресурсов. Всегда используйте явный scope.
 
 ```kotlin
-// Вместо @CacheEvict + повторного обращения к БД:
-@CachePut(cacheNames = ["restaurants"], key = "#id")
-fun update(id: Long, command: UpdateRestaurantCommand): Restaurant {
-    val restaurant = restaurantRepository.findById(id)
-        ?: throw NotFoundException("Ресторан с id=$id не найден")
-    return restaurantRepository.save(restaurant.apply(command))
+// Плохо
+GlobalScope.launch { sendEmail(...) }
+
+// Хорошо
+scope.launch { sendEmail(...) }
+```
+
+**Блокирующий код без withContext.** Вызов блокирующей операции (JDBC, `mailSender.send`) прямо в корутине на `Dispatchers.Default` заблокирует поток из пула и снизит пропускную способность. Оборачивайте в `withContext(Dispatchers.IO)`.
+
+```kotlin
+// Плохо — блокирует поток из Default-пула
+scope.launch {
+    mailSender.send(message)  // блокирующий вызов
+}
+
+// Хорошо
+scope.launch {
+    withContext(Dispatchers.IO) {
+        mailSender.send(message)
+    }
 }
 ```
 
-Сравнение трёх аннотаций:
+**@Transactional не работает с корутинами.** Spring-транзакции хранятся в `ThreadLocal` и не передаются между потоками. Если нужна транзакция внутри корутины — запустите блокирующую операцию через обычный `@Transactional`-метод в другом бине, не пытайтесь использовать `@Transactional` на `suspend`-функции напрямую.
 
-| Аннотация | Метод выполняется? | Кэш обновляется? | Когда использовать |
-|:--|:--:|:--:|:--|
-| `@Cacheable` | Только при кэш-промахе | Да (при промахе) | Чтение |
-| `@CacheEvict` | Всегда | Нет (удаляет) | Создание, удаление |
-| `@CachePut` | Всегда | Да (обновляет) | Обновление |
+**CancellationException нельзя поглощать.** Корутины используют `CancellationException` для сигнала об отмене. Если поймаете его в `catch` — не забудьте перебросить:
+
+```kotlin
+scope.launch {
+    try {
+        doWork()
+    } catch (e: CancellationException) {
+        throw e  // обязательно перебросить
+    } catch (e: Exception) {
+        logger.error(e) { "Ошибка в фоновой задаче" }
+    }
+}
+```
+
+Альтернатива — `runCatching`, который не перехватывает `CancellationException`.
+
+**Обработка исключений.** Исключение в `launch`-корутине не всплывает в вызывающий код — оно уходит в `CoroutineExceptionHandler` или просто теряется. Этот пункт заслуживает отдельного раздела — см. ниже.
+
+#### Обработка исключений и связь с @RestControllerAdvice
+
+Прежде чем думать об обработке исключений, нужно ответить на вопрос: **важен ли результат операции клиенту прямо сейчас?**
+
+От этого зависит весь подход.
 
 ---
 
-### 8) Разные TTL для разных кэшей
+**Если результат важен клиенту — используйте `suspend fun`.**
 
-Разные данные устаревают с разной скоростью. Список ресторанов меняется редко — его можно кэшировать на час. Данные заказа меняются часто — на минуту или вообще не кэшировать.
+В этом случае операция выполняется в рамках HTTP-запроса. Исключения из `suspend`-функций всплывают по цепочке вызовов до Spring, и `@RestControllerAdvice` перехватывает их как обычно — никаких специальных усилий не нужно:
 
 ```kotlin
-@Configuration
-class CacheConfig {
+@RestController
+class OrderController(private val orderService: OrderService) {
 
-    @Bean
-    fun redisCacheManagerBuilderCustomizer(
-        objectMapper: ObjectMapper
-    ): RedisCacheManagerBuilderCustomizer {
-        val serializer = GenericJackson2JsonRedisSerializer(objectMapper)
-        val serializationPair = RedisSerializationContext.SerializationPair
-            .fromSerializer(serializer)
+    @PatchMapping("/orders/{id}/status")
+    suspend fun updateStatus(@PathVariable id: Long, @RequestBody dto: StatusDto): OrderDto {
+        return orderService.updateStatus(id, dto.status)
+    }
+}
 
-        fun config(ttl: Duration) = RedisCacheConfiguration.defaultCacheConfig()
-            .entryTtl(ttl)
-            .serializeValuesWith(serializationPair)
-            .disableCachingNullValues()
+@Service
+class OrderService(private val orderRepository: OrderRepository) {
 
-        return RedisCacheManagerBuilderCustomizer { builder ->
-            builder
-                .withCacheConfiguration("restaurants", config(Duration.ofHours(1)))
-                .withCacheConfiguration("dishes", config(Duration.ofHours(1)))
-                .cacheDefaults(config(Duration.ofMinutes(5)))
+    suspend fun updateStatus(id: Long, status: String): OrderDto {
+        val order = orderRepository.findById(id)
+            ?: throw NotFoundException("Заказ $id не найден")  // пробросится наверх
+        order.status = status
+        return orderRepository.save(order).toDto()
+    }
+}
+
+@RestControllerAdvice
+class GlobalExceptionHandler {
+
+    @ExceptionHandler(NotFoundException::class)
+    fun handleNotFound(ex: NotFoundException): ResponseEntity<ErrorResponse> =
+        ResponseEntity.status(404).body(ErrorResponse(ex.message))  // поймает
+}
+```
+
+`suspend fun` в сервисе ведёт себя ровно так же, как обычная функция с точки зрения обработки исключений — просто выполняется на IO-потоке.
+
+---
+
+**Если результат клиенту не нужен — используйте `scope.launch` и обрабатывайте ошибки внутри.**
+
+`scope.launch` означает, что вы намеренно отвязываете задачу от HTTP-запроса: клиент получит ответ немедленно, а работа продолжится в фоне. Отправка email при смене статуса — классический пример: клиент получил `200 OK`, заказ обновлён. Произошла ли отправка письма — его уже не касается.
+
+Именно поэтому пробросить исключение из `scope.launch` обратно клиенту **невозможно** — HTTP-ответ уже ушёл. Попытки это сделать — признак того, что задача на самом деле не fire-and-forget, и нужно использовать `suspend`.
+
+Ошибки внутри `scope.launch` обрабатываются локально. Удобный инструмент — `runCatching`, который не перехватывает `CancellationException`:
+
+```kotlin
+@Service
+class NotificationService(
+    private val mailSender: JavaMailSender,
+    private val scope: CoroutineScope
+) {
+    private val logger = KotlinLogging.logger {}
+
+    fun sendOrderStatusUpdate(to: String, orderId: Long, status: String) {
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    mailSender.send(SimpleMailMessage().apply {
+                        setTo(to)
+                        subject = "Заказ #$orderId: статус изменён"
+                        text = "Новый статус: $status"
+                    })
+                }
+            }.onSuccess {
+                logger.info { "Уведомление по заказу #$orderId отправлено на $to" }
+            }.onFailure { ex ->
+                logger.error(ex) { "Не удалось отправить уведомление на $to" }
+                // клиенту об этом не сообщаем — он уже получил свой ответ
+            }
         }
     }
 }
@@ -334,185 +386,279 @@ class CacheConfig {
 
 ---
 
-### 9) Проверка кэша через redis-cli
+**`CoroutineExceptionHandler` — страховка для всего scope.**
 
-Убедиться, что данные реально попадают в Redis, можно через встроенный CLI:
+Это последний рубеж: если в каком-то `launch` забыли обработать исключение, handler на уровне scope поймает его и не даст потеряться молча. Не замена локальной обработке, а дополнение к ней:
 
-```bash
-# Зайти в контейнер с Redis
-docker compose exec redis redis-cli
-
-# Список всех ключей
-KEYS *
-
-# Посмотреть тип значения
-TYPE "restaurants::SimpleKey []"
-
-# Посмотреть значение (JSON, если настроена Jackson-сериализация)
-GET "restaurants::SimpleKey []"
-
-# Посмотреть TTL (в секундах, -1 = без TTL, -2 = ключ не существует)
-TTL "restaurants::SimpleKey []"
+```kotlin
+@Bean
+fun applicationScope(): CoroutineScope {
+    val handler = CoroutineExceptionHandler { _, ex ->
+        LoggerFactory.getLogger("CoroutineScope")
+            .error("Необработанное исключение в фоновой корутине", ex)
+    }
+    return CoroutineScope(SupervisorJob() + Dispatchers.IO + handler)
+}
 ```
 
 ---
 
-### 10) Тестирование кэширования
+**Итог: как выбрать подход.**
 
-Кэш нужно тестировать явно — иначе вы не узнаете, что аннотации расставлены правильно и инвалидация работает как надо. Главное, что нужно проверить:
+| Ситуация | Инструмент | Исключения |
+|:----|:----|:----|
+| Клиенту нужен результат (найти заказ, создать ресурс) | `suspend fun` | Всплывают в `@RestControllerAdvice` |
+| Клиенту не нужен результат (отправить письмо, записать в лог) | `scope.launch` | Обрабатываются внутри корутины |
 
-- **Cache miss → cache hit**: первый вызов идёт в БД, второй — из кэша.
-- **Eviction**: после create/update/delete следующий вызов снова идёт в БД.
-- **Изоляция тестов**: кэш между тестами очищается, чтобы они не влияли друг на друга.
+---
 
-Для этого нужен **реальный Redis** в тестах — используем Testcontainers (Postgres в тестах вы уже поднимали так же):
+### 3) Планировщик: @Scheduled
+
+`@Scheduled` запускает метод по расписанию — в фоне, независимо от HTTP-запросов.
+
+#### Включение
 
 ```kotlin
-@SpringBootTest
-@AutoConfigureMockMvc
-@ActiveProfiles("test")
-class RestaurantCacheTest {
+@SpringBootApplication
+@EnableScheduling
+class DeliveryApplication
+```
 
-    companion object {
-        @Container
-        @JvmStatic
-        val redis = GenericContainer("redis:7-alpine")
-            .withExposedPorts(6379)
+> `@EnableAsync` нужен только если вы используете аннотацию `@Async`. При работе с корутинами он не нужен.
 
-        @DynamicPropertySource
-        @JvmStatic
-        fun redisProperties(registry: DynamicPropertyRegistry) {
-            registry.add("spring.data.redis.host") { redis.host }
-            registry.add("spring.data.redis.port") { redis.firstMappedPort }
-        }
-    }
+#### Варианты расписания
 
-    @Autowired lateinit var mockMvc: MockMvc
-    @Autowired lateinit var cacheManager: CacheManager
+```kotlin
+@Scheduled(fixedDelay = 60_000)       // через 60 сек после окончания предыдущего
+@Scheduled(fixedRate = 60_000)        // каждые 60 сек, независимо от времени выполнения
+@Scheduled(cron = "0 0 3 * * *")      // каждый день в 03:00
+```
 
-    @BeforeEach
-    fun clearCache() {
-        // сбрасываем кэш перед каждым тестом — изоляция
-        cacheManager.cacheNames.forEach { cacheManager.getCache(it)?.clear() }
-    }
+#### Интервал из конфигурации
 
-    @Test
-    @WithMockUser(roles = ["ADMIN"])
-    fun `повторный запрос списка ресторанов не идёт в БД`() {
-        mockMvc.perform(get("/api/v1/restaurants")).andExpect(status().isOk)
-        mockMvc.perform(get("/api/v1/restaurants")).andExpect(status().isOk)
-        // проверяем, что в кэше есть данные (промах не произошёл второй раз)
-        val cache = cacheManager.getCache("restaurants")
-        assertNotNull(cache?.get(SimpleKey.EMPTY))
-    }
+Хардкодить интервалы в аннотациях — плохая практика: чтобы поменять, нужно перекомпилировать. Выносите в `application.yaml`:
 
-    @Test
-    @WithMockUser(roles = ["ADMIN"])
-    fun `создание ресторана инвалидирует кэш`() {
-        // заполняем кэш
-        mockMvc.perform(get("/api/v1/restaurants")).andExpect(status().isOk)
-        assertNotNull(cacheManager.getCache("restaurants")?.get(SimpleKey.EMPTY))
+```yaml
+app:
+  scheduler:
+    stuck-order-interval-ms: 900000   # 15 минут
+    stuck-order-threshold-hours: 1
+```
 
-        // создаём ресторан — кэш должен быть сброшен
-        mockMvc.perform(
-            post("/api/v1/restaurants")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("""{"name": "Новый", "address": "ул. Теста, 1"}""")
-        ).andExpect(status().isCreated)
+```kotlin
+@Scheduled(fixedDelayString = "\${app.scheduler.stuck-order-interval-ms}")
+fun cancelStuckOrders() { ... }
+```
 
-        // кэш пуст — следующий GET пойдёт в БД
-        assertNull(cacheManager.getCache("restaurants")?.get(SimpleKey.EMPTY))
-    }
+#### Cron-формат
+
+Spring использует 6-польный cron: `секунды минуты часы день_месяца месяц день_недели`.
+
+| Выражение           | Значение             |
+|:--------------------|:---------------------|
+| `0 * * * * *`       | каждую минуту        |
+| `0 0 * * * *`       | каждый час           |
+| `0 0 3 * * *`       | каждый день в 03:00  |
+| `0 */30 * * * *`    | каждые 30 минут      |
+| `0 0 9 * * MON-FRI` | в 09:00 по будням    |
+
+#### Обычная функция, suspend или scope.launch?
+
+**`@Scheduled`-метод всегда должен быть обычной `fun`.** Spring-планировщик не умеет вызывать `suspend`-функции — если пометить `suspend fun` аннотацией `@Scheduled`, Spring вызовет её как обычный Java-метод, получит объект `Continuation` и ничего не выполнит.
+
+Внутри обычного `@Scheduled`-метода у вас три варианта:
+
+**Прямой вызов** — для лёгких операций. Планировщик выполняет работу синхронно. Просто и предсказуемо: `fixedDelay` отсчитывается от момента завершения работы, поэтому запуски никогда не накладываются.
+
+```kotlin
+@Scheduled(fixedDelayString = "\${app.scheduler.stuck-order-interval-ms}")
+fun cancelStuckOrders() {
+    val stuck = orderRepository.findByStatus("PREPARING")  // синхронный вызов
+    stuck.forEach { ... }
 }
 ```
 
-> `cacheManager.getCache("restaurants")?.get(SimpleKey.EMPTY)` — проверяет запись для метода без параметров (`getAll()`). Для методов с параметром ключ другой: `cacheManager.getCache("restaurants")?.get(1L)` для `getById(1L)`.
+**`scope.launch`** — для тяжёлых или долгих операций. Планировщик запускает корутину и сразу возвращается. Работа выполняется на пуле IO-потоков. Важный нюанс: поскольку метод возвращается мгновенно, `fixedDelay` начнёт отсчитывать паузу от возврата метода, а не от завершения корутины. `fixedRate` в этом случае создаёт риск наложения запусков — если предыдущая корутина ещё не завершилась, а интервал истёк, запустится новая. Используйте с осторожностью.
 
-Паттерн тестирования простой: **arrange** (заполнить кэш первым запросом) → **act** (мутировать данные) → **assert** (кэш пуст или обновлён через `cacheManager`).
+```kotlin
+@Scheduled(fixedDelayString = "\${app.scheduler.stuck-order-interval-ms}")
+fun cancelStuckOrders() {
+    scope.launch {
+        val stuck = orderRepository.findByStatus("PREPARING")
+        stuck.forEach { ... }
+    }
+    // возвращается немедленно, корутина работает в фоне
+}
+```
+
+**`suspend fun` на `@Scheduled`** — не использовать. Не работает.
+
+Итог:
+
+| Сценарий | Что писать |
+|:---|:---|
+| Быстрая операция (1–2 запроса в БД) | Обычная `fun`, прямой вызов |
+| Долгая IO-операция, много записей | `scope.launch` внутри обычной `fun` |
+| `suspend fun` прямо на методе | Не работает |
+
+Для примера с отменой зависших заказов достаточно прямого вызова — операция простая. `scope.launch` понадобился бы, если бы заказов было тысячи и обработка каждого занимала заметное время.
+
+Для проверки в разработке временно уменьшите интервал в `application.yaml`.
+
+---
+
+### 4) Spring Mail
+
+#### Зависимость
+
+```xml
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-mail</artifactId>
+</dependency>
+```
+
+#### JavaMailSender
+
+`SimpleMailMessage` — для простого текста, `MimeMessage` — для HTML и вложений:
+
+```kotlin
+val message = SimpleMailMessage().apply {
+    setTo(to)
+    subject = "Заказ #$orderId: статус изменён"
+    text = "Ваш заказ перешёл в статус: $status"
+}
+mailSender.send(message)
+```
+
+---
+
+### 5) Вариант A: Gmail SMTP
+
+Gmail позволяет отправлять письма через SMTP, но требует **пароль приложения** — отдельный 16-символьный пароль, который Google выдаёт для конкретного приложения.
+
+**Создание пароля приложения:**
+1. Включите двухфакторную аутентификацию: Google Account → Security → 2-Step Verification.
+2. Перейдите: Google Account → Security → **App passwords**.
+3. Введите название (например, `spring-delivery`), нажмите Create.
+4. Скопируйте 16-символьный пароль — он показывается один раз.
+
+**Конфигурация `application.yaml`:**
+
+```yaml
+spring:
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: ${GMAIL_USERNAME}
+    password: ${GMAIL_APP_PASSWORD}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+```
+
+> **Никогда не коммитьте учётные данные в репозиторий.**
+>
+> `GMAIL_USERNAME` и `GMAIL_APP_PASSWORD` — переменные окружения. Определите их в `.env`-файле (он уже в `.gitignore` с ЛР-8). В `.env.example` оставьте ключи с пустыми значениями — как документацию для других разработчиков.
+>
+> Если вы случайно закоммитили пароль — **немедленно отзовите его** в настройках Google и создайте новый. История git публична, удалить коммит недостаточно.
+
+---
+
+### 6) Вариант B: MailHog
+
+MailHog — фейковый SMTP-сервер с веб-интерфейсом. Перехватывает все письма локально: ничего не уходит в интернет, никаких реальных аккаунтов.
+
+**Добавить в docker-compose.yaml:**
+
+```yaml
+  mailhog:
+    image: mailhog/mailhog
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # Web UI
+```
+
+**Конфигурация `application.yaml`:**
+
+```yaml
+spring:
+  mail:
+    host: localhost
+    port: 1025
+```
+
+Откройте `http://localhost:8025` — все отправленные письма появятся там в реальном времени.
 
 ---
 
 ## Практическое задание
 
-### 1) Подключите Redis
+### 1) Добавьте зависимости и включите корутины
 
-1. Добавьте Redis в `docker-compose.yml` с healthcheck.
-2. Добавьте зависимости `spring-boot-starter-data-redis` и `spring-boot-starter-cache` в `pom.xml`.
-3. Добавьте `@EnableCaching` в главный класс приложения.
-4. Вынесите хост и порт Redis в переменные окружения в `application.yaml`.
+Добавьте `kotlinx-coroutines-core` и `kotlinx-coroutines-reactor` в `pom.xml`. Создайте `CoroutineConfig` с `applicationScope` как Spring-бином (`SupervisorJob + Dispatchers.IO`).
 
-### 2) Настройте CacheConfig
+### 2) Реализуйте NotificationService
 
-1. Создайте конфигурацию с JSON-сериализацией через `GenericJackson2JsonRedisSerializer`.
-2. Задайте разный TTL для кэшей `restaurants` и `dishes` (минимум 5 минут).
-3. `disableCachingNullValues()` обязателен.
+Создайте сервис с методом отправки email при смене статуса заказа. Используйте `scope.launch` и оборачивайте блокирующий `mailSender.send` в `withContext(Dispatchers.IO)`. Добавьте обработку ошибок — ошибка отправки письма не должна ронять основной поток выполнения.
 
-### 3) Определите и закэшируйте часто читаемые данные
+Вызывайте `NotificationService` из `OrderService` при каждом обновлении статуса заказа.
 
-Проанализируйте эндпоинты проекта и выберите те, которые стоит кэшировать. Ориентируйтесь на критерии из теоретического блока. Закэшируйте не менее трёх методов в сервисном слое.
+### 3) Настройте Spring Mail
 
-### 4) Реализуйте инвалидацию
+Выберите один вариант: **Gmail** или **MailHog**.
 
-1. При создании ресторана — сбросить весь кэш `restaurants`.
-2. При обновлении ресторана — сбросить кэш `restaurants` (или обновить через `@CachePut`).
-3. При удалении ресторана — сбросить кэш `restaurants` и `dishes`.
-4. При добавлении/обновлении/удалении блюда — сбросить кэш `dishes` для этого ресторана.
+- Для Gmail: создайте App Password, вынесите `GMAIL_USERNAME` и `GMAIL_APP_PASSWORD` в `.env`. Убедитесь, что `.env` в `.gitignore`.
+- Для MailHog: добавьте сервис в docker-compose.
 
-### 5) Убедитесь в работе кэша
+Проверьте, что письмо реально доходит: папка «Отправленные» в Gmail или веб-интерфейс MailHog.
 
-1. Добавьте `logger.info` перед обращением в репозиторий в закэшированных методах.
-2. При двух одинаковых GET-запросах логи не должны повторяться.
+### 4) Реализуйте планировщик
 
-### 6) Напишите тесты на кэширование
+Создайте `OrderScheduler` с `@Scheduled`-методом, который:
+- находит заказы в статусе `PREPARING`, созданные раньше порогового времени
+- переводит их в `CANCELLED`
+- логирует количество найденных и каждый отменённый заказ на уровне INFO
+- шлёт уведомление пользователю через `NotificationService`
 
-Используйте Testcontainers с Redis (по аналогии с Postgres в ЛР-6).
-
-1. Добавьте зависимость `org.testcontainers:testcontainers` (если ещё нет).
-2. Поднимите Redis-контейнер через `GenericContainer` и пробросьте порт через `@DynamicPropertySource`.
-3. В `@BeforeEach` сбрасывайте кэш через `cacheManager` — это гарантирует изоляцию между тестами.
-4. Напишите минимум три теста:
-    - Повторный GET не идёт в БД (кэш-хит виден через `cacheManager.getCache(...)`).
-    - После создания/удаления сущности запись в кэше отсутствует.
-    - После update кэш содержит обновлённые данные (если используете `@CachePut`).
-5. Убедитесь, что все тесты из ЛР-6/7 по-прежнему проходят — подключение Redis не должно ломать существующую логику.
+Интервал проверки и пороговое время вынесите в `application.yaml`.
 
 ---
 
-## Критерии оценки (максимум 25 баллов)
+## Критерии оценки (максимум 15 баллов)
 
-| Категория       | Критерий                                                                           | Баллы  |
-|:----------------|:-----------------------------------------------------------------------------------|:------:|
-| Штраф           | Не проходят тесты из предыдущих ЛР                                                 |   -5   |
-| Redis в compose | Redis поднимается с healthcheck, хост/порт в env                                   |   3    |
-| CacheConfig     | JSON-сериализация, TTL, disableCachingNullValues                                   |   3    |
-| @Cacheable      | Кэш для `getAll`, `getById` ресторана и блюд по ресторану                          |   5    |
-| @CacheEvict     | Инвалидация при create/update/delete ресторанов и блюд                             |   5    |
-| Связанные кэши  | Удаление блюда инвалидирует кэш и `dishes`, и `restaurants`                        |   3    |
-| Проверка кэша   | Логирование + демонстрация через redis-cli или тест                                |   3    |
-| Тесты           | Testcontainers Redis, изоляция через `cacheManager.clear()`, ≥3 теста на кэш/evict |   2    |
-| Качество        | Чистота кода, конфигурация через env                                               |   1    |
-| **Итого**       |                                                                                    | **25** |
+| Категория          | Критерий                                                                         | Баллы  |
+|:-------------------|:---------------------------------------------------------------------------------|:------:|
+| Корутины           | `CoroutineScope`-бин, `scope.launch`, `withContext(Dispatchers.IO)`, обработка ошибок | 4 |
+| NotificationService| Письмо отправляется при смене статуса, вызов из `OrderService`                   |   3    |
+| Spring Mail        | Gmail или MailHog настроен, письмо реально доходит, учётные данные в `.env`      |   4    |
+| @Scheduled         | Планировщик отменяет зависшие заказы, INFO-логирование, интервал из `application.yaml` | 4 |
+| **Итого**          |                                                                                  | **15** |
 
 ---
 
 ## Мини-чеклист перед сдачей
 
-1. `docker compose up` поднимает Redis без ошибок, healthcheck зелёный.
-2. `GET /api/v1/restaurants` дважды подряд — лог "загрузка из БД" появляется только один раз.
-3. `POST /api/v1/restaurants` — после создания следующий `GET /api/v1/restaurants` снова идёт в БД (кэш сброшен).
-4. `docker compose exec redis redis-cli KEYS *` — видны ключи вида `restaurants::*`, `dishes::*`.
-5. Значения в Redis — читаемый JSON, не бинарные данные.
-6. Тесты на кэш: cache-hit проверяется через `cacheManager`, eviction — через `assertNull` после мутации.
-7. Все тесты из ЛР-6/7 проходят без изменений логики.
-7. `REDIS_HOST` и `REDIS_PORT` берутся из переменных окружения, не захардкожены.
+1. При смене статуса заказа уходит письмо (видно в MailHog или Gmail «Отправленные»).
+2. `NotificationService` использует `scope.launch`, а не `GlobalScope`.
+3. Блокирующий `mailSender.send` обёрнут в `withContext(Dispatchers.IO)`.
+4. Учётные данные SMTP — в `.env`, не захардкожены в yaml, `.env` в `.gitignore`.
+5. Планировщик логирует количество зависших заказов и каждую отмену.
+6. Интервал и порог планировщика настраиваются в `application.yaml`.
+7. `./mvnw test` проходит без ошибок.
 
 ---
 
 ## Что почитать
 
-1. [Spring Cache Abstraction](https://docs.spring.io/spring-framework/reference/integration/cache.html)
-2. [Spring Data Redis](https://docs.spring.io/spring-data/redis/reference/)
-3. [Redis Documentation](https://redis.io/docs/)
-4. [Caching with Spring Boot — Baeldung](https://www.baeldung.com/spring-cache-tutorial)
-5. [Redis in Spring Boot — Baeldung](https://www.baeldung.com/spring-data-redis-tutorial)
-6. [Testcontainers with Redis](https://java.testcontainers.org/modules/redis/)
+1. [Kotlin Coroutines Guide](https://kotlinlang.org/docs/coroutines-guide.html)
+2. [Coroutines + Spring Boot](https://spring.io/blog/2019/04/12/going-reactive-with-spring-coroutines-and-kotlin-flow)
+3. [Baeldung — Kotlin Coroutines](https://www.baeldung.com/kotlin/coroutines)
+4. [Spring @Scheduled](https://docs.spring.io/spring-framework/reference/integration/scheduling.html#scheduling-annotation-support-scheduled)
+5. [Spring Mail](https://docs.spring.io/spring-framework/reference/integration/email.html)
+6. [Baeldung — @Async](https://www.baeldung.com/spring-async)
+7. [Gmail App Passwords](https://support.google.com/accounts/answer/185833)
+8. [MailHog](https://github.com/mailhog/MailHog)
