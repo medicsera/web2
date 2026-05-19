@@ -18,3 +18,7 @@ logging:
     org.springframework.web: WARN
     org.hibernate: WARN
     org.flywaydb: WARN
+
+jwt:
+  secret: "test-secret-key-for-testing-purposes-only-not-for-production-use"
+  expiration-ms: 86400000
