@@ -1,12 +1,12 @@
-# Лабораторная работа №8
+# Лабораторная работа №9
 
-## Документация API, контейнеризация и CI/CD
+## Кэширование: Redis и Spring Cache
 
 ---
 
 ## Цель работы
 
-Задокументировать REST API через SpringDoc, упаковать приложение в Docker-образ, поднять весь стек через docker-compose и настроить автоматическую доставку образа в реестр через GitHub Actions.
+Добавить в проект доставки еды из ЛР-8 слой кэширования: подключить Redis, настроить Spring Cache и закэшировать горячие read-эндпоинты. Реализовать инвалидацию кэша при изменении данных.
 
 ---
 
@@ -18,398 +18,501 @@
 
 ## Теоретический блок
 
-### 1) Документирование API: SpringDoc OpenAPI
+### 1) Зачем нужен кэш
 
-#### Зачем это нужно
+Каждый GET-запрос в вашем сервисе сейчас идёт в PostgreSQL. Большинство данных при этом не меняется между запросами: список ресторанов, меню конкретного заведения, информация о блюде. Если к API обратятся 100 пользователей подряд с запросом `GET /api/v1/restaurants`, БД выполнит один и тот же SELECT 100 раз.
 
-Когда API растёт, его становится сложно изучать по коду. SpringDoc автоматически генерирует документацию из ваших контроллеров и публикует интерактивный Swagger UI — браузерный интерфейс, через который можно смотреть все эндпоинты и сразу отправлять запросы.
+Кэш решает это: результат первого запроса сохраняется во временном хранилище. Следующие 99 запросов получают ответ из кэша — без обращения к БД. Выигрыш двойной:
+- **Latency** — ответ из Redis приходит за ~1 мс против ~10–50 мс из БД.
+- **Нагрузка** — БД разгружается и может обслуживать записи и сложные запросы.
 
-#### Зависимость
+Кэш не серебряная пуля. Он добавляет сложность: нужно следить за актуальностью данных, настраивать TTL, думать об инвалидации. Кэшировать стоит данные, которые:
+- Читаются часто (hot path)
+- Изменяются редко
+- Дорого вычисляются
+
+Список ресторанов и меню — хрестоматийный пример таких данных.
+
+---
+
+### 2) Redis: что это и зачем
+
+**Redis** (Remote Dictionary Server) — хранилище данных в памяти (in-memory). В отличие от PostgreSQL, Redis не пишет каждую операцию на диск синхронно — он держит все данные в RAM, поэтому работает на порядки быстрее.
+
+Redis не только кэш: это многофункциональное хранилище со своими структурами данных:
+
+| Структура | Команды | Пример использования |
+|:--|:--|:--|
+| String | GET, SET, INCR | Кэш одного объекта, счётчики |
+| Hash | HGET, HSET | Кэш объекта с полями |
+| List | LPUSH, RPOP | Очереди задач |
+| Set | SADD, SMEMBERS | Уникальные значения |
+| Sorted Set | ZADD, ZRANGE | Рейтинги, топы |
+| Stream | XADD, XREAD | Событийный лог |
+
+В рамках этой лабораторной Redis используется как кэш для Spring Cache — взаимодействие идёт через Spring-абстракцию, а не напрямую через Redis-команды.
+
+#### Подключение Redis через docker-compose
+
+Добавьте Redis в ваш `docker-compose.yml`:
+
+```yaml
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  redis_data:
+```
+
+Флаг `--appendonly yes` включает AOF-персистентность: Redis записывает каждую команду в файл, чтобы данные пережили рестарт.
+
+---
+
+### 3) Spring Cache: абстракция над хранилищем
+
+Spring Cache — это слой абстракции, который позволяет добавить кэширование через аннотации, не завязываясь на конкретное хранилище. Один и тот же код будет работать с Redis, Caffeine (in-memory), EhCache или любым другим провайдером — нужно только поменять конфигурацию.
+
+#### Зависимости
 
 ```xml
-<!-- pom.xml -->
+<!-- Starter для Spring Cache + Redis -->
 <dependency>
-    <groupId>org.springdoc</groupId>
-    <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
-    <version>2.8.9</version>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-data-redis</artifactId>
+</dependency>
+<dependency>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-cache</artifactId>
 </dependency>
 ```
 
-После добавления зависимости Swagger UI доступен по адресу `http://localhost:8080/swagger-ui.html` — без каких-либо дополнительных настроек.
+#### Включение кэша
 
-OpenAPI JSON/YAML схема: `http://localhost:8080/v3/api-docs`.
+Добавьте `@EnableCaching` в конфигурационный класс или главный класс приложения:
 
-#### Настройка мета-информации (опционально)
+```kotlin
+@SpringBootApplication
+@EnableCaching
+class DeliveryApplication
+
+fun main(args: Array<String>) {
+    runApplication<DeliveryApplication>(*args)
+}
+```
+
+#### Настройка в application.yaml
+
+```yaml
+spring:
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+  cache:
+    type: redis
+    redis:
+      time-to-live: 300000  # 5 минут в миллисекундах
+```
+
+---
+
+### 4) Конфигурация Redis как кэша
+
+По умолчанию Spring Data Redis сериализует объекты через Java Serialization — это неудобно (классы должны реализовывать `Serializable`) и нечитаемо в Redis-клиенте. Лучше использовать JSON через Jackson:
 
 ```kotlin
 @Configuration
-class OpenApiConfig {
+class CacheConfig {
+
     @Bean
-    fun openApi(): OpenAPI = OpenAPI()
-        .info(
-            Info()
-                .title("Food Delivery API")
-                .version("1.0.0")
-                .description("REST API сервиса доставки еды")
-        )
+    fun redisCacheManagerBuilderCustomizer(
+        objectMapper: ObjectMapper
+    ): RedisCacheManagerBuilderCustomizer {
+        val serializer = GenericJackson2JsonRedisSerializer(objectMapper)
+        val serializationPair = RedisSerializationContext.SerializationPair
+            .fromSerializer(serializer)
+
+        return RedisCacheManagerBuilderCustomizer { builder ->
+            builder.cacheDefaults(
+                RedisCacheConfiguration.defaultCacheConfig()
+                    .entryTtl(Duration.ofMinutes(5))
+                    .serializeValuesWith(serializationPair)
+                    .disableCachingNullValues()
+            )
+        }
+    }
 }
 ```
 
-#### Swagger UI и Spring Security
+Что настраивается:
+- **Сериализация**: JSON вместо Java Serialization — данные читаемы в `redis-cli`.
+- **TTL**: время жизни записи. После истечения Redis удаляет её автоматически.
+- **Null values**: `disableCachingNullValues()` — не кэшируем `null`, иначе кэшируется "объект не найден" и при следующем создании клиент получит `null` из кэша вместо реального объекта.
 
-Если у вас настроена Spring Security (из ЛР-7), пути Swagger UI нужно явно разрешить в `SecurityFilterChain`:
+> **Важно для Kotlin**: Jackson по умолчанию не знает о Kotlin-специфике (data class, nullable типы). Убедитесь, что в проекте подключён `jackson-module-kotlin`:
+> ```xml
+> <dependency>
+>     <groupId>com.fasterxml.jackson.module</groupId>
+>     <artifactId>jackson-module-kotlin</artifactId>
+> </dependency>
+> ```
+> Spring Boot подключает его автоматически, если он есть в classpath.
+
+---
+
+### 5) @Cacheable: кэширование результата метода
+
+`@Cacheable` — основная аннотация. При первом вызове метода результат сохраняется в кэше. При последующих вызовах с теми же параметрами метод не выполняется, а результат берётся из кэша.
 
 ```kotlin
-.authorizeHttpRequests { auth ->
-    auth
-        .requestMatchers(
-            "/swagger-ui/**",
-            "/swagger-ui.html",
-            "/v3/api-docs/**"
-        ).permitAll()
-        // ... остальные правила
+@Service
+class RestaurantService(
+    private val restaurantRepository: RestaurantRepositoryPort
+) {
+    private val logger = KotlinLogging.logger {}
+
+    @Cacheable(cacheNames = ["restaurants"])
+    fun getAll(): List<Restaurant> {
+        logger.info { "Загрузка всех ресторанов из БД" }
+        return restaurantRepository.findAll()
+    }
+
+    @Cacheable(cacheNames = ["restaurants"], key = "#id")
+    fun getById(id: Long): Restaurant {
+        logger.info { "Загрузка ресторана id=$id из БД" }
+        return restaurantRepository.findById(id)
+            ?: throw NotFoundException("Ресторан с id=$id не найден")
+    }
 }
 ```
 
-#### Аннотирование контроллеров
+#### Как формируется ключ кэша
 
-Основные аннотации из пакета `io.swagger.v3.oas.annotations`:
+Redis хранит данные в виде пар ключ-значение. Spring Cache автоматически формирует ключ из имени кэша и параметров метода:
 
-- `@Tag(name = "...")` — группировка эндпоинтов в UI
-- `@Operation(summary = "...")` — краткое описание метода
-- `@ApiResponse(responseCode = "200", description = "...")` — описание кода ответа
-- `@Parameter(description = "...")` — описание параметра запроса
-- `@Schema(description = "...")` — описание поля DTO
+- `getAll()` → ключ: `restaurants::SimpleKey []`
+- `getById(1L)` → ключ: `restaurants::1`
+- `getById(2L)` → ключ: `restaurants::2`
 
-Пример:
+Параметр `key` принимает SpEL-выражение. `#id` — значение параметра с именем `id`:
 
 ```kotlin
-@RestController
-@RequestMapping("/api/restaurants")
-@Tag(name = "Restaurants", description = "Управление ресторанами")
-class RestaurantController(private val restaurantService: RestaurantService) {
+// #id — значение параметра id
+@Cacheable(cacheNames = ["dishes"], key = "#restaurantId")
+fun getDishesByRestaurant(restaurantId: Long): List<Dish>
 
-    @GetMapping("/{id}")
-    @Operation(summary = "Получить ресторан по ID")
-    @ApiResponses(
-        value = [
-            ApiResponse(responseCode = "200", description = "Ресторан найден"),
-            ApiResponse(responseCode = "404", description = "Ресторан не найден")
-        ]
-    )
-    fun getById(@PathVariable id: Long): ResponseEntity<RestaurantDto> =
-        ResponseEntity.ok(restaurantService.getById(id))
+// Составной ключ
+@Cacheable(cacheNames = ["orders"], key = "#userId + '_' + #status")
+fun getOrdersByUserAndStatus(userId: Long, status: OrderStatus): List<Order>
+```
+
+> **Логирование помогает проверить работу кэша.** Добавьте `logger.info` перед обращением к репозиторию. Если при повторном запросе лог не появляется — метод не вызывается, данные идут из кэша. Это нагляднее, чем смотреть на время ответа.
+
+---
+
+### 6) @CacheEvict: инвалидация кэша
+
+Кэшированные данные устаревают при изменении. Если создать новый ресторан — список ресторанов в кэше содержит старые данные. `@CacheEvict` удаляет записи из кэша при вызове метода.
+
+```kotlin
+@CacheEvict(cacheNames = ["restaurants"], allEntries = true)
+fun create(command: CreateRestaurantCommand): Restaurant {
+    val restaurant = restaurantRepository.save(command.toEntity())
+    logger.info { "Создан ресторан id=${restaurant.id}, кэш инвалидирован" }
+    return restaurant
+}
+
+@CacheEvict(cacheNames = ["restaurants"], allEntries = true)
+fun update(id: Long, command: UpdateRestaurantCommand): Restaurant {
+    val restaurant = restaurantRepository.findById(id)
+        ?: throw NotFoundException("Ресторан с id=$id не найден")
+    return restaurantRepository.save(restaurant.apply(command))
+}
+
+@CacheEvict(cacheNames = ["restaurants"], allEntries = true)
+fun delete(id: Long) {
+    if (!restaurantRepository.existsById(id)) {
+        throw NotFoundException("Ресторан с id=$id не найден")
+    }
+    restaurantRepository.deleteById(id)
 }
 ```
 
-Аннотировать все эндпоинты необязательно — SpringDoc подхватит их автоматически. Аннотации нужны там, где автоматически сгенерированное описание недостаточно понятно.
+`allEntries = true` — удалить все записи в кэше `restaurants`. Это грубо, но надёжно: после создания ресторана неизвестно, какие конкретно ключи устарели (например, постраничные запросы). Для простой модели это правильный подход.
+
+Если нужно удалить только конкретную запись:
+
+```kotlin
+// Удалить только ресторан с этим id
+@CacheEvict(cacheNames = ["restaurants"], key = "#id")
+fun delete(id: Long)
+```
+
+#### Инвалидация связанных кэшей
+
+Когда меняется блюдо — устаревает не только кэш этого блюда, но и кэш меню ресторана. Для инвалидации нескольких кэшей используйте `@Caching`:
+
+```kotlin
+@Caching(evict = [
+    CacheEvict(cacheNames = ["dishes"], key = "#restaurantId"),
+    CacheEvict(cacheNames = ["restaurants"], allEntries = true)
+])
+fun addDish(restaurantId: Long, command: CreateDishCommand): Dish {
+    val restaurant = restaurantRepository.findById(restaurantId)
+        ?: throw NotFoundException("Ресторан с id=$restaurantId не найден")
+    return dishRepository.save(command.toEntity(restaurant))
+}
+```
 
 ---
 
-### 2) Dockerfile: упаковка приложения
+### 7) @CachePut: обновление кэша
 
-#### Принцип работы
+`@CachePut` выполняет метод **всегда** и сохраняет результат в кэш. В отличие от `@Cacheable`, не пропускает вызов метода. Удобно при обновлении: вместо инвалидации сразу кладём новое значение.
 
-Docker упаковывает приложение и его окружение (JRE, конфиги) в образ — изолированный исполняемый пакет. Образ одинаково запускается на любой машине, где установлен Docker.
-
-#### Multi-stage сборка
-
-Наивный подход — скопировать уже собранный JAR в образ:
-
-```dockerfile
-FROM eclipse-temurin:21-jre
-COPY target/*.jar app.jar
-ENTRYPOINT ["java", "-jar", "app.jar"]
+```kotlin
+// Вместо @CacheEvict + повторного обращения к БД:
+@CachePut(cacheNames = ["restaurants"], key = "#id")
+fun update(id: Long, command: UpdateRestaurantCommand): Restaurant {
+    val restaurant = restaurantRepository.findById(id)
+        ?: throw NotFoundException("Ресторан с id=$id не найден")
+    return restaurantRepository.save(restaurant.apply(command))
+}
 ```
 
-Проблема: нужно сначала собрать JAR локально командой `mvn package`, и `target/` должен существовать до сборки образа.
+Сравнение трёх аннотаций:
 
-Лучший вариант — **multi-stage build**: Maven запускается внутри контейнера, итоговый образ содержит только JRE и JAR:
+| Аннотация | Метод выполняется? | Кэш обновляется? | Когда использовать |
+|:--|:--:|:--:|:--|
+| `@Cacheable` | Только при кэш-промахе | Да (при промахе) | Чтение |
+| `@CacheEvict` | Всегда | Нет (удаляет) | Создание, удаление |
+| `@CachePut` | Всегда | Да (обновляет) | Обновление |
 
-```dockerfile
-# Stage 1: сборка
-FROM eclipse-temurin:21-jdk AS builder
-WORKDIR /app
-COPY . .
-RUN ./mvnw package -DskipTests
+---
 
-# Stage 2: runtime
-FROM eclipse-temurin:21-jre
-WORKDIR /app
-COPY --from=builder /app/target/*.jar app.jar
-EXPOSE 8080
-ENTRYPOINT ["java", "-jar", "app.jar"]
+### 8) Разные TTL для разных кэшей
+
+Разные данные устаревают с разной скоростью. Список ресторанов меняется редко — его можно кэшировать на час. Данные заказа меняются часто — на минуту или вообще не кэшировать.
+
+```kotlin
+@Configuration
+class CacheConfig {
+
+    @Bean
+    fun redisCacheManagerBuilderCustomizer(
+        objectMapper: ObjectMapper
+    ): RedisCacheManagerBuilderCustomizer {
+        val serializer = GenericJackson2JsonRedisSerializer(objectMapper)
+        val serializationPair = RedisSerializationContext.SerializationPair
+            .fromSerializer(serializer)
+
+        fun config(ttl: Duration) = RedisCacheConfiguration.defaultCacheConfig()
+            .entryTtl(ttl)
+            .serializeValuesWith(serializationPair)
+            .disableCachingNullValues()
+
+        return RedisCacheManagerBuilderCustomizer { builder ->
+            builder
+                .withCacheConfiguration("restaurants", config(Duration.ofHours(1)))
+                .withCacheConfiguration("dishes", config(Duration.ofHours(1)))
+                .cacheDefaults(config(Duration.ofMinutes(5)))
+        }
+    }
+}
 ```
 
-Финальный образ не содержит JDK, Maven и исходников — только JRE (~270 MB) и JAR. Это важно для безопасности и размера.
+---
 
-#### .dockerignore
+### 9) Проверка кэша через redis-cli
 
-Аналог `.gitignore` — указывает, что не нужно копировать в контекст сборки. Ускоряет сборку и исключает чувствительные файлы:
-
-```
-target/
-.git/
-.github/
-.idea/
-*.md
-.env
-```
-
-> `target/` не нужен: в multi-stage сборке Maven работает внутри контейнера.
-
-#### Проверка локально
+Убедиться, что данные реально попадают в Redis, можно через встроенный CLI:
 
 ```bash
-docker build -t food-delivery:latest .
-docker run -p 8080:8080 food-delivery:latest
+# Зайти в контейнер с Redis
+docker compose exec redis redis-cli
+
+# Список всех ключей
+KEYS *
+
+# Посмотреть тип значения
+TYPE "restaurants::SimpleKey []"
+
+# Посмотреть значение (JSON, если настроена Jackson-сериализация)
+GET "restaurants::SimpleKey []"
+
+# Посмотреть TTL (в секундах, -1 = без TTL, -2 = ключ не существует)
+TTL "restaurants::SimpleKey []"
 ```
 
 ---
 
-### 3) Docker Compose: поднять весь стек
+### 10) Тестирование кэширования
 
-В ЛР-4 вы уже добавили docker-compose.yaml с сервисом `postgres`. Теперь добавьте к нему два новых сервиса: `app` (ваш REST API) и `pgadmin` (веб-интерфейс для базы данных).
+Кэш нужно тестировать явно — иначе вы не узнаете, что аннотации расставлены правильно и инвалидация работает как надо. Главное, что нужно проверить:
 
-#### Сети
+- **Cache miss → cache hit**: первый вызов идёт в БД, второй — из кэша.
+- **Eviction**: после create/update/delete следующий вызов снова идёт в БД.
+- **Изоляция тестов**: кэш между тестами очищается, чтобы они не влияли друг на друга.
 
-Все сервисы в одном compose-файле по умолчанию оказываются в одной сети. Docker DNS резолвит имя сервиса в IP контейнера — поэтому в `SPRING_DATASOURCE_URL` нужно писать имя сервиса (`postgres`), а не `localhost`.
+Для этого нужен **реальный Redis** в тестах — используем Testcontainers (Postgres в тестах вы уже поднимали так же):
 
-#### healthcheck + depends_on
+```kotlin
+@SpringBootTest
+@AutoConfigureMockMvc
+@ActiveProfiles("test")
+class RestaurantCacheTest {
 
-Без `condition: service_healthy` приложение может стартовать раньше, чем postgres будет готов принимать соединения — Spring выбросит исключение при старте. Решение:
+    companion object {
+        @Container
+        @JvmStatic
+        val redis = GenericContainer("redis:7-alpine")
+            .withExposedPorts(6379)
 
-1. Добавить `healthcheck` на сервис `postgres` — он периодически проверяет готовность через `pg_isready`.
-2. Добавить `depends_on` с `condition: service_healthy` на сервис `app` — compose дождётся зелёного статуса перед запуском приложения.
+        @DynamicPropertySource
+        @JvmStatic
+        fun redisProperties(registry: DynamicPropertyRegistry) {
+            registry.add("spring.data.redis.host") { redis.host }
+            registry.add("spring.data.redis.port") { redis.firstMappedPort }
+        }
+    }
 
-#### pgAdmin
+    @Autowired lateinit var mockMvc: MockMvc
+    @Autowired lateinit var cacheManager: CacheManager
 
-Образ: `dpage/pgadmin4`. После запуска pgAdmin доступен в браузере. Для подключения к БД внутри pgAdmin в качестве хоста укажите имя сервиса postgres в compose-файле — Docker DNS сам разрешит его в нужный IP.
+    @BeforeEach
+    fun clearCache() {
+        // сбрасываем кэш перед каждым тестом — изоляция
+        cacheManager.cacheNames.forEach { cacheManager.getCache(it)?.clear() }
+    }
 
-#### Переменные окружения: .env файл
+    @Test
+    @WithMockUser(roles = ["ADMIN"])
+    fun `повторный запрос списка ресторанов не идёт в БД`() {
+        mockMvc.perform(get("/api/v1/restaurants")).andExpect(status().isOk)
+        mockMvc.perform(get("/api/v1/restaurants")).andExpect(status().isOk)
+        // проверяем, что в кэше есть данные (промах не произошёл второй раз)
+        val cache = cacheManager.getCache("restaurants")
+        assertNotNull(cache?.get(SimpleKey.EMPTY))
+    }
 
-Хранить логины и пароли прямо в docker-compose.yaml — плохая практика: они попадут в git. Docker Compose автоматически читает файл `.env` из той же директории и подставляет переменные через синтаксис `${VAR_NAME}`.
+    @Test
+    @WithMockUser(roles = ["ADMIN"])
+    fun `создание ресторана инвалидирует кэш`() {
+        // заполняем кэш
+        mockMvc.perform(get("/api/v1/restaurants")).andExpect(status().isOk)
+        assertNotNull(cacheManager.getCache("restaurants")?.get(SimpleKey.EMPTY))
 
-Пример `.env`:
+        // создаём ресторан — кэш должен быть сброшен
+        mockMvc.perform(
+            post("/api/v1/restaurants")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"name": "Новый", "address": "ул. Теста, 1"}""")
+        ).andExpect(status().isCreated)
 
-```
-POSTGRES_DB=delivery
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-PGADMIN_EMAIL=admin@admin.com
-PGADMIN_PASSWORD=admin
-```
-
-В docker-compose.yaml переменные используются так:
-
-```yaml
-environment:
-  POSTGRES_DB: ${POSTGRES_DB}
-  POSTGRES_USER: ${POSTGRES_USER}
-  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-```
-
-Файл `.env` **не должен попасть в git** — добавьте его в `.gitignore`. Вместо него коммитьте `.env.example` с теми же ключами, но пустыми значениями — это документация для других разработчиков.
-
-#### Команды
-
-```bash
-docker compose up --build     # собрать образ и поднять стек
-docker compose up -d           # в фоне
-docker compose down            # остановить и удалить контейнеры
-docker compose logs -f app     # смотреть логи приложения
-```
-
----
-
-### 4) GitHub Actions: публикация образа (CD)
-
-До сих пор `ci.yaml` запускал тесты на каждый PR. Теперь добавим `cd.yaml`, который будет собирать образ и отправлять его в реестр при каждом push в основную ветку.
-
-Разделение на два файла — стандартная практика:
-- **CI** (Continuous Integration) — проверяем качество на PR, до мержа
-- **CD** (Continuous Delivery) — доставляем артефакт после мержа в main
-
-Вы можете выбрать **один** из двух реестров — DockerHub или GHCR.
-
----
-
-#### Вариант A: DockerHub
-
-**Подготовка:**
-1. Зарегистрируйтесь на [hub.docker.com](https://hub.docker.com)
-2. Account Settings → Security → **New Access Token** (разрешения: Read, Write, Delete). Скопируйте токен — он показывается только один раз.
-3. Откройте ваш репозиторий на GitHub → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**. Добавьте два секрета:
-    - `DOCKERHUB_USERNAME` — ваш логин на DockerHub
-    - `DOCKERHUB_TOKEN` — токен из шага 2
-
-Секреты зашифрованы и недоступны для чтения после сохранения. В логах Actions они автоматически маскируются (`***`).
-
-```yaml
-# .github/workflows/cd.yaml
-name: CD
-
-on:
-  push:
-    branches: [ main ]
-
-jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Log in to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ${{ secrets.DOCKERHUB_USERNAME }}/food-delivery:latest
+        // кэш пуст — следующий GET пойдёт в БД
+        assertNull(cacheManager.getCache("restaurants")?.get(SimpleKey.EMPTY))
+    }
+}
 ```
 
-Образ будет доступен по адресу `docker.io/<ваш-логин>/food-delivery:latest`.
+> `cacheManager.getCache("restaurants")?.get(SimpleKey.EMPTY)` — проверяет запись для метода без параметров (`getAll()`). Для методов с параметром ключ другой: `cacheManager.getCache("restaurants")?.get(1L)` для `getById(1L)`.
 
----
-
-#### Вариант B: GHCR (GitHub Container Registry)
-
-GHCR встроен в GitHub и не требует отдельного аккаунта. Каждый GitHub Actions workflow автоматически получает временный `GITHUB_TOKEN` — именно он используется для аутентификации.
-
-**Подготовка:** Никакой. Только добавьте `permissions` в файл workflow (см. ниже).
-
-```yaml
-# .github/workflows/cd.yaml
-name: CD
-
-on:
-  push:
-    branches: [ master ]
-
-permissions:
-  contents: read
-  packages: write
-
-jobs:
-  build-and-push:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ghcr.io/${{ github.repository_owner }}/food-delivery:latest
-```
-
-После успешного прогона образ появится в разделе **Packages** вашего GitHub-профиля.
-
----
-
-### 5) ci.yaml: проверьте триггер
-
-У вас уже есть `ci.yaml` с предыдущих работ. Убедитесь, что он запускается на pull request в основную ветку:
-
-```yaml
-on:
-  pull_request:
-    branches: [ master ]
-```
-
-Если стоит `push` или `workflow_dispatch` — замените или добавьте `pull_request`.
+Паттерн тестирования простой: **arrange** (заполнить кэш первым запросом) → **act** (мутировать данные) → **assert** (кэш пуст или обновлён через `cacheManager`).
 
 ---
 
 ## Практическое задание
 
-### 1) SpringDoc
+### 1) Подключите Redis
 
-- Добавьте зависимость в `pom.xml`
-- Если настроена Spring Security — откройте пути Swagger UI в `SecurityFilterChain`
-- Аннотируйте минимум **3 эндпоинта**: `@Operation`, `@ApiResponse`
-- Убедитесь: `http://localhost:8080/swagger-ui.html` открывается и отображает ваш API
+1. Добавьте Redis в `docker-compose.yml` с healthcheck.
+2. Добавьте зависимости `spring-boot-starter-data-redis` и `spring-boot-starter-cache` в `pom.xml`.
+3. Добавьте `@EnableCaching` в главный класс приложения.
+4. Вынесите хост и порт Redis в переменные окружения в `application.yaml`.
 
-### 2) Dockerfile
+### 2) Настройте CacheConfig
 
-- Создайте `Dockerfile` в корне проекта (multi-stage: builder + runtime)
-- Создайте `.dockerignore`
-- Убедитесь: `docker build -t food-delivery .` завершается без ошибок
+1. Создайте конфигурацию с JSON-сериализацией через `GenericJackson2JsonRedisSerializer`.
+2. Задайте разный TTL для кэшей `restaurants` и `dishes` (минимум 5 минут).
+3. `disableCachingNullValues()` обязателен.
 
-### 3) docker-compose.yaml
+### 3) Определите и закэшируйте часто читаемые данные
 
-- К существующему сервису `postgres` добавьте `app` и `pgadmin`
-- Добавьте `healthcheck` для postgres и `depends_on: condition: service_healthy` для app
-- Вынесите все переменные окружения в `.env`, добавьте `.env` в `.gitignore`, создайте `.env.example` с теми же ключами и пустыми значениями
-- Убедитесь: `docker compose up --build` поднимает все три сервиса, приложение стартует и отвечает на запросы
+Проанализируйте эндпоинты проекта и выберите те, которые стоит кэшировать. Ориентируйтесь на критерии из теоретического блока. Закэшируйте не менее трёх методов в сервисном слое.
 
-### 4) cd.yaml
+### 4) Реализуйте инвалидацию
 
-- Создайте `.github/workflows/cd.yaml`
-- Выберите реестр: DockerHub или GHCR
-- Добавьте нужные секреты в GitHub (для DockerHub)
-- Сделайте push в основную ветку — workflow должен отработать, образ должен появиться в реестре
+1. При создании ресторана — сбросить весь кэш `restaurants`.
+2. При обновлении ресторана — сбросить кэш `restaurants` (или обновить через `@CachePut`).
+3. При удалении ресторана — сбросить кэш `restaurants` и `dishes`.
+4. При добавлении/обновлении/удалении блюда — сбросить кэш `dishes` для этого ресторана.
 
-### 5) ci.yaml
+### 5) Убедитесь в работе кэша
 
-- Проверьте триггер — должен быть `pull_request` на основную ветку
-- Если нет — исправьте
+1. Добавьте `logger.info` перед обращением в репозиторий в закэшированных методах.
+2. При двух одинаковых GET-запросах логи не должны повторяться.
+
+### 6) Напишите тесты на кэширование
+
+Используйте Testcontainers с Redis (по аналогии с Postgres в ЛР-6).
+
+1. Добавьте зависимость `org.testcontainers:testcontainers` (если ещё нет).
+2. Поднимите Redis-контейнер через `GenericContainer` и пробросьте порт через `@DynamicPropertySource`.
+3. В `@BeforeEach` сбрасывайте кэш через `cacheManager` — это гарантирует изоляцию между тестами.
+4. Напишите минимум три теста:
+    - Повторный GET не идёт в БД (кэш-хит виден через `cacheManager.getCache(...)`).
+    - После создания/удаления сущности запись в кэше отсутствует.
+    - После update кэш содержит обновлённые данные (если используете `@CachePut`).
+5. Убедитесь, что все тесты из ЛР-6/7 по-прежнему проходят — подключение Redis не должно ломать существующую логику.
 
 ---
 
-## Критерии оценки (максимум 15 баллов)
+## Критерии оценки (максимум 25 баллов)
 
-| Категория              | Критерий                                                                     | Баллы  |
-|:-----------------------|:-----------------------------------------------------------------------------|:------:|
-| SpringDoc              | Зависимость добавлена, Swagger UI открывается, аннотации на 3+ эндпоинтах   |   3    |
-| Dockerfile             | Multi-stage build, корректный ENTRYPOINT, `.dockerignore`                    |   4    |
-| docker-compose         | Сервисы app + pgAdmin, переменные через `.env`, `.env.example` в репозитории |   3    |
-| healthcheck + порядок  | `healthcheck` на postgres, `depends_on: condition: service_healthy` для app  |   3    |
-| cd.yaml                | Собирает образ и пушит в реестр (DockerHub или GHCR)                         |   2    |
-| **Итого**              |                                                                              | **15** |
-
-Штраф: `ci.yaml` не имеет триггера на `pull_request` — **−2 балла**.
+| Категория       | Критерий                                                                           | Баллы  |
+|:----------------|:-----------------------------------------------------------------------------------|:------:|
+| Штраф           | Не проходят тесты из предыдущих ЛР                                                 |   -5   |
+| Redis в compose | Redis поднимается с healthcheck, хост/порт в env                                   |   3    |
+| CacheConfig     | JSON-сериализация, TTL, disableCachingNullValues                                   |   3    |
+| @Cacheable      | Кэш для `getAll`, `getById` ресторана и блюд по ресторану                          |   5    |
+| @CacheEvict     | Инвалидация при create/update/delete ресторанов и блюд                             |   5    |
+| Связанные кэши  | Удаление блюда инвалидирует кэш и `dishes`, и `restaurants`                        |   3    |
+| Проверка кэша   | Логирование + демонстрация через redis-cli или тест                                |   3    |
+| Тесты           | Testcontainers Redis, изоляция через `cacheManager.clear()`, ≥3 теста на кэш/evict |   2    |
+| Качество        | Чистота кода, конфигурация через env                                               |   1    |
+| **Итого**       |                                                                                    | **25** |
 
 ---
 
 ## Мини-чеклист перед сдачей
 
-1. `docker build .` завершается без ошибок.
-2. `docker compose up --build` поднимает postgres + app + pgadmin.
-3. На сервисе `postgres` настроен `healthcheck`, сервис `app` стартует только после его прохождения (`depends_on: condition: service_healthy`).
-4. Переменные окружения вынесены в `.env`, в репозитории есть `.env.example`, `.env` в `.gitignore`.
-5. Swagger UI доступен по `/swagger-ui.html` и отображает эндпоинты.
-6. cd.yaml сработал при последнем push в main — образ виден в реестре.
-7. ci.yaml триггерится на `pull_request`.
+1. `docker compose up` поднимает Redis без ошибок, healthcheck зелёный.
+2. `GET /api/v1/restaurants` дважды подряд — лог "загрузка из БД" появляется только один раз.
+3. `POST /api/v1/restaurants` — после создания следующий `GET /api/v1/restaurants` снова идёт в БД (кэш сброшен).
+4. `docker compose exec redis redis-cli KEYS *` — видны ключи вида `restaurants::*`, `dishes::*`.
+5. Значения в Redis — читаемый JSON, не бинарные данные.
+6. Тесты на кэш: cache-hit проверяется через `cacheManager`, eviction — через `assertNull` после мутации.
+7. Все тесты из ЛР-6/7 проходят без изменений логики.
+7. `REDIS_HOST` и `REDIS_PORT` берутся из переменных окружения, не захардкожены.
 
 ---
 
 ## Что почитать
 
-1. [SpringDoc OpenAPI](https://springdoc.org/)
-2. [SpringDoc + Spring Security](https://springdoc.org/#spring-security-integration)
-3. [Swagger Annotations](https://github.com/swagger-api/swagger-core/wiki/Swagger-2.X---Annotations)
-4. [Dockerfile reference](https://docs.docker.com/reference/dockerfile/)
-5. [Docker multi-stage builds](https://docs.docker.com/build/building/multi-stage/)
-6. [Docker Compose reference](https://docs.docker.com/compose/compose-file/)
-7. [docker/login-action](https://github.com/docker/login-action)
-8. [docker/build-push-action](https://github.com/docker/build-push-action)
-9. [DockerHub access tokens](https://docs.docker.com/security/for-developers/access-tokens/)
-10. [GitHub Container Registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+1. [Spring Cache Abstraction](https://docs.spring.io/spring-framework/reference/integration/cache.html)
+2. [Spring Data Redis](https://docs.spring.io/spring-data/redis/reference/)
+3. [Redis Documentation](https://redis.io/docs/)
+4. [Caching with Spring Boot — Baeldung](https://www.baeldung.com/spring-cache-tutorial)
+5. [Redis in Spring Boot — Baeldung](https://www.baeldung.com/spring-data-redis-tutorial)
+6. [Testcontainers with Redis](https://java.testcontainers.org/modules/redis/)
