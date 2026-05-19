@@ -8,6 +8,9 @@ import com.example.spring_jpa.domain.model.Dish
 import com.example.spring_jpa.domain.port.DishRepositoryPort
 import com.example.spring_jpa.domain.port.RestaurantRepositoryPort
 import org.slf4j.LoggerFactory
+import org.springframework.cache.annotation.CacheEvict
+import org.springframework.cache.annotation.Cacheable
+import org.springframework.cache.annotation.Caching
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import org.springframework.stereotype.Service
@@ -34,7 +37,9 @@ class DishService(
     }
 
     @Transactional(readOnly = true)
+    @Cacheable(cacheNames = ["dishes"], key = "'id::' + #id")
     fun findById(id: Long): Dish {
+        logger.info("Loading dish id={} from DB", id)
         return dishRepository.findById(id)
             ?: run {
                 logger.warn("Dish not found with id: {}", id)
@@ -60,6 +65,10 @@ class DishService(
         return dishRepository.findByIsAvailableTrue()
     }
 
+    @Caching(evict = [
+        CacheEvict(cacheNames = ["dishes"], allEntries = true),
+        CacheEvict(cacheNames = ["restaurants"], allEntries = true)
+    ])
     fun create(request: CreateDishRequest): Dish {
         val restId = request.restaurantId
             ?: throw BadRequestException("Restaurant ID cannot be null")
@@ -76,10 +85,14 @@ class DishService(
             restaurantId = restId
         )
         val created = dishRepository.create(dish)
-        logger.info("Created dish with id: {}", created.id)
+        logger.info("Created dish id={}, dishes and restaurants caches evicted", created.id)
         return created
     }
 
+    @Caching(evict = [
+        CacheEvict(cacheNames = ["dishes"], allEntries = true),
+        CacheEvict(cacheNames = ["restaurants"], allEntries = true)
+    ])
     fun update(id: Long, request: UpdateDishRequest): Dish {
         val existing = dishRepository.findById(id)
             ?: run {
@@ -94,16 +107,20 @@ class DishService(
         )
         val saved = dishRepository.update(id, updated)
             ?: throw NotFoundException("Dish not found with id: $id")
-        logger.info("Updated dish with id: {}", id)
+        logger.info("Updated dish id={}, dishes and restaurants caches evicted", id)
         return saved
     }
 
+    @Caching(evict = [
+        CacheEvict(cacheNames = ["dishes"], allEntries = true),
+        CacheEvict(cacheNames = ["restaurants"], allEntries = true)
+    ])
     fun deleteById(id: Long) {
         val deleted = dishRepository.deleteById(id)
         if (!deleted) {
             logger.warn("Dish not found with id: {}", id)
             throw NotFoundException("Dish not found with id: $id")
         }
-        logger.info("Deleted dish with id: {}", id)
+        logger.info("Deleted dish id={}, dishes and restaurants caches evicted", id)
     }
 }
