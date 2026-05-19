@@ -3,6 +3,8 @@ package com.example.spring_jpa.application.exception
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
+import org.springframework.security.access.AccessDeniedException
+import org.springframework.security.authentication.BadCredentialsException
 import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
@@ -34,6 +36,18 @@ class GlobalExceptionHandler {
     fun handleBadRequestException(ex: BadRequestException): ResponseEntity<ErrorResponse> {
         logger.warn("Bad Request Exception: {}", ex.message)
         return ResponseEntity(ErrorResponse(HttpStatus.BAD_REQUEST, ex.message), HttpStatus.BAD_REQUEST)
+    }
+
+    @ExceptionHandler(BadCredentialsException::class)
+    fun handleBadCredentials(ex: BadCredentialsException): ResponseEntity<ErrorResponse> {
+        logger.warn("Bad Credentials: {}", ex.message)
+        return ResponseEntity(ErrorResponse(HttpStatus.UNAUTHORIZED, "Invalid email or password"), HttpStatus.UNAUTHORIZED)
+    }
+
+    @ExceptionHandler(AccessDeniedException::class)
+    fun handleAccessDenied(ex: AccessDeniedException): ResponseEntity<ErrorResponse> {
+        logger.warn("Access Denied: {}", ex.message)
+        return ResponseEntity(ErrorResponse(HttpStatus.FORBIDDEN, "Access denied"), HttpStatus.FORBIDDEN)
     }
 
     @ExceptionHandler(MethodArgumentNotValidException::class)
